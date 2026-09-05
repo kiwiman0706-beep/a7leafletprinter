@@ -321,14 +321,18 @@ def test_fallback_dialog_command_is_importable(tmp_path):
 
     from orihon import winprint
 
-    missing = tmp_path / "ここには無い.pdf"
+    # ファイル名も断定する文字列も ASCII にしておく。
+    # Windows でパイプに書き出される stderr は日本語が \uXXXX に
+    # エスケープされるため、日本語で照合すると環境によって落ちる。
+    missing = tmp_path / "missing.pdf"
     cmd = winprint._fallback_dialog_command(missing)
     env, cwd = winprint._fallback_dialog_env()
+    env["PYTHONIOENCODING"] = "utf-8"    # 失敗したときのログを読めるように
     proc = subprocess.run([sys.executable] + cmd[1:], env=env, cwd=cwd,
                           capture_output=True, text=True, timeout=60)
     assert proc.returncode == 1, proc.stderr
     assert "Traceback" not in proc.stderr
-    assert "見つかりません" in proc.stderr
+    assert "missing.pdf" in proc.stderr   # 「PDF が見つかりません」の経路を通っている
 
 
 def test_watcher_cleans_up_stale_claim_files(cfg):
