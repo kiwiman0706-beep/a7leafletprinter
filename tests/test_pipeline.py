@@ -171,6 +171,28 @@ def test_watcher_ignores_files_still_being_written(cfg):
     assert target.exists()
 
 
+def test_watcher_picks_up_a_file_whose_timestamp_is_in_the_future(cfg):
+    """更新時刻が未来でも取りこぼさないこと。
+
+    Windows ではタイムスタンプの精度や時刻のずれで、書き終わったばかりの
+    ファイルの更新時刻が現在時刻より先になることがある。
+    """
+    import os as _os
+    import time as _time
+
+    spool = cfg.resolved_spool_dir()
+    spool.mkdir(parents=True, exist_ok=True)
+    target = spool / "job.pdf"
+    impose.write_test_pdf(target, pages=8, size="A7")
+    future = _time.time() + 5
+    _os.utime(target, (future, future))
+
+    results = watcher.Watcher(cfg).process_once()
+
+    assert len(results) == 1
+    assert list(spool.iterdir()) == []
+
+
 def test_watcher_ignores_empty_files(cfg):
     spool = cfg.resolved_spool_dir()
     spool.mkdir(parents=True, exist_ok=True)
@@ -329,7 +351,10 @@ def test_fallback_dialog_command_is_importable(tmp_path):
     env, cwd = winprint._fallback_dialog_env()
     env["PYTHONIOENCODING"] = "utf-8"    # 失敗したときのログを読めるように
     proc = subprocess.run([sys.executable] + cmd[1:], env=env, cwd=cwd,
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, timeout=60,
+                          # 子に合わせて親も UTF-8 で読む。既定のままだと
+                          # Windows では cp1252 で読もうとして読み取りが死ぬ。
+                          encoding="utf-8", errors="replace")
     assert proc.returncode == 1, proc.stderr
     assert "Traceback" not in proc.stderr
     assert "missing.pdf" in proc.stderr   # 「PDF が見つかりません」の経路を通っている

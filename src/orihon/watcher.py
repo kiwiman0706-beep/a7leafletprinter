@@ -214,7 +214,11 @@ class Watcher:
             return False
 
         settle = max(0.0, self.cfg.settle_sec)
-        if (time.time() - stat.st_mtime) >= settle:
+        # Windows ではタイムスタンプの精度や時刻のずれで、書き終わったばかりの
+        # ファイルの更新時刻が「未来」になることがある。そのまま引き算すると
+        # 負になり、いつまでも「書き込み中」と判定してしまうので 0 で止める。
+        age = max(0.0, time.time() - stat.st_mtime)
+        if age >= settle:
             return True
 
         seen = self._seen.get(path)
