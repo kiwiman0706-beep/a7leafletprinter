@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import logging.handlers
 import os
+import shutil
 import signal
 import sys
 import time
@@ -23,6 +25,28 @@ logger = logging.getLogger(__name__)
 
 LOCK_FILENAME = "watcher.lock"
 CLAIM_SUFFIX = ".orihon-processing"
+
+#: 掴んだまま放置された作業ファイルを片付けるまでの時間（秒）
+STALE_CLAIM_SEC = 3600
+
+
+def _retry_file_op(operation: Callable[[], None], attempts: int = 4,
+                   delay: float = 0.2) -> bool:
+    """Windows のファイルロックを見越して、少し待ちながら繰り返す。
+
+    直前まで PDF を読んでいたプロセスがハンドルを手放すのに一瞬かかることがある。
+    """
+    for attempt in range(attempts):
+        try:
+            operation()
+            return True
+        except OSError as exc:
+            if attempt == attempts - 1:
+                logger.debug("ファイル操作をあきらめました: %s", exc)
+                return False
+            gc.collect()
+            time.sleep(delay * (attempt + 1))
+    return False
 
 
 # ----------------------------------------------------------------------
@@ -239,22 +263,42 @@ class Watcher:
                     self.on_job(result)
                 except Exception:  # pragma: no cover - コールバック側の都合
                     logger.exception("on_job コールバックが失敗しました")
-            try:
-                claimed.unlink(missing_ok=True)
-            except OSError as exc:
-                logger.warning("一時ファイルを消せませんでした: %s: %s", claimed, exc)
+            if not _retry_file_op(lambda: claimed.unlink(missing_ok=True)):
+                logger.warning(
+                    "作業ファイルを消せませんでした（あとで片付けます）: %s", claimed
+                )
         return results
 
     def _quarantine(self, claimed: Path) -> None:
-        """処理に失敗した PDF を failed フォルダへ退避する。"""
+        """処理に失敗した PDF を failed フォルダへ退避する。
+
+        Windows では、直前に読もうとしたファイルがまだ掴まれていて
+        リネームできないことがある。少し待って繰り返し、それでも駄目なら
+        コピーしてから消す。スプールにゴミを残さないことを優先する。
+        """
         failed_dir = self.cfg.processed_dir() / "failed"
+        target = failed_dir / f"{int(time.time())}_{claimed.name.split('.')[0]}.pdf"
         try:
             failed_dir.mkdir(parents=True, exist_ok=True)
-            target = failed_dir / f"{int(time.time())}_{claimed.name.split('.')[0]}.pdf"
-            os.replace(claimed, target)
-            logger.warning("失敗した PDF を退避しました: %s", target)
         except OSError as exc:
-            logger.warning("失敗した PDF を退避できませんでした: %s", exc)
+            logger.warning("退避先を作れませんでした: %s", exc)
+            return
+
+        if _retry_file_op(lambda: os.replace(claimed, target)):
+            logger.warning("失敗した PDF を退避しました: %s", target)
+            return
+
+        # リネームできないならコピーしてから消す
+        def copy_then_remove() -> None:
+            shutil.copy2(claimed, target)
+            claimed.unlink()
+
+        if _retry_file_op(copy_then_remove):
+            logger.warning("失敗した PDF を退避しました: %s", target)
+        else:
+            logger.warning(
+                "失敗した PDF を退避できませんでした（あとで片付けます）: %s", claimed
+            )
 
     # -- 更新 -------------------------------------------------------
     def check_for_update(self, force: bool = False) -> update.Release | None:
@@ -300,18 +344,37 @@ class Watcher:
         return release
 
     def cleanup(self) -> None:
-        """古い処理済みファイルを片付ける。"""
+        """古い処理済みファイルと、置き去りになった作業ファイルを片付ける。"""
         days = self.cfg.keep_processed_days
         base = self.cfg.processed_dir()
-        if not base.is_dir():
+        if base.is_dir():
+            cutoff = time.time() - days * 86400
+            for path in base.rglob("*.pdf"):
+                try:
+                    if days <= 0 or path.stat().st_mtime < cutoff:
+                        path.unlink()
+                except OSError:
+                    continue
+        self.cleanup_stale_claims()
+
+    def cleanup_stale_claims(self) -> None:
+        """掴んだまま消せなかった作業ファイルを、時間をおいて片付ける。
+
+        ファイルを掴んでいたプロセスはとっくに手放しているはずなので、
+        ここでならたいてい消せる。
+        """
+        spool = self.cfg.resolved_spool_dir()
+        if not spool.is_dir():
             return
-        cutoff = time.time() - days * 86400
-        for path in base.rglob("*.pdf"):
+        cutoff = time.time() - STALE_CLAIM_SEC
+        for path in spool.glob(f"*{CLAIM_SUFFIX}"):
             try:
-                if days <= 0 or path.stat().st_mtime < cutoff:
-                    path.unlink()
+                if path.stat().st_mtime >= cutoff:
+                    continue
             except OSError:
                 continue
+            if _retry_file_op(lambda p=path: p.unlink()):
+                logger.info("置き去りの作業ファイルを片付けました: %s", path.name)
 
     # -- ループ -----------------------------------------------------
     def run(self) -> None:

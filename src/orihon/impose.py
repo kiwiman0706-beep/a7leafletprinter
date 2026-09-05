@@ -485,13 +485,33 @@ def impose_document(
     return out, result
 
 
+#: これより小さい PDF はメモリに読み込んでから開く（下の open_pdf を参照）
+IN_MEMORY_LIMIT = 200 * 1024 * 1024
+
+
+def open_pdf(path: str | Path) -> pymupdf.Document:
+    """PDF を開く。小さいものはメモリに読み込んでから開く。
+
+    Windows では、開いたまま（あるいは開くのに失敗した直後）のファイルを
+    リネームも削除もできない。スプールのファイルは処理後に必ず片付けるので、
+    ファイルハンドルを握らずに済むこの方法を既定にしている。
+    """
+    path = Path(path)
+    try:
+        if path.stat().st_size <= IN_MEMORY_LIMIT:
+            return pymupdf.open(stream=path.read_bytes(), filetype="pdf")
+    except OSError as exc:
+        logger.debug("メモリに読み込めませんでした（ファイルとして開きます）: %s", exc)
+    return pymupdf.open(path)
+
+
 def impose_pdf(
     src_path: str | Path, dst_path: str | Path, opts: ImposeOptions | None = None
 ) -> ImposeResult:
     """PDF ファイルを面付けしてファイルに書き出す。"""
     src_path = Path(src_path)
     dst_path = Path(dst_path)
-    with pymupdf.open(src_path) as src:
+    with open_pdf(src_path) as src:
         out, result = impose_document(src, opts)
         try:
             dst_path.parent.mkdir(parents=True, exist_ok=True)

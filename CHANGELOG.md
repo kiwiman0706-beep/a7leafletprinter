@@ -19,6 +19,7 @@
   - 標準の「Microsoft Print to PDF」をファイル指定のローカルポートに紐づけた
     仮想プリンタを作るインストーラ（署名付きドライバーの開発が不要）
   - スプールフォルダを監視して、届いた PDF を自動で面付けする常駐プロセス
+    （Windows のファイルロックを見越して、作業ファイルは繰り返し片付ける）
   - ログオン時に監視を自動起動するタスクの登録
 - **面付けエンジン**
   - 図6 と同じ 8 ページ折本（A4→A7）。左綴じ・右綴じ
@@ -40,7 +41,7 @@
 - **その他**
   - 設定画面（tkinter）とコマンドライン（`impose` / `watch` / `gui` / `layouts` /
     `printers` / `selftest` / `config` / `update` / `doctor`）
-  - 158 件のテストと、レイアウト定義から生成する面付け図
+  - 160 件のテストと、レイアウト定義から生成する面付け図
 
 [Unreleased]: https://github.com/kiwiman0706-beep/a7leafletprinter/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/kiwiman0706-beep/a7leafletprinter/releases/tag/v0.1.0

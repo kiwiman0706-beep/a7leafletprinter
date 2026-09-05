@@ -12,8 +12,6 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-import pymupdf
-
 from . import impose, winprint
 from .config import Config
 
@@ -41,7 +39,7 @@ def document_title(pdf: Path) -> str:
     これを出力ファイル名に使うと「どの原稿から作った折本か」が分かりやすい。
     """
     try:
-        with pymupdf.open(pdf) as doc:
+        with impose.open_pdf(pdf) as doc:
             title = (doc.metadata or {}).get("title") or ""
     except Exception as exc:  # pragma: no cover - 壊れた PDF など
         logger.debug("タイトルを読めませんでした: %s: %s", pdf, exc)

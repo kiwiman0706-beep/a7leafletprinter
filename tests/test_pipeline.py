@@ -308,20 +308,84 @@ def test_dialog_rejects_missing_pdf(tmp_path):
 
 
 def test_fallback_dialog_command_is_importable(tmp_path):
-    """内蔵ダイアログを別プロセスで起動するコマンドが実際に import できること。"""
+    """内蔵ダイアログを別プロセスで起動するコマンドが本当に動くこと。
+
+    存在しない PDF を渡して、ダイアログを開く手前で終わらせている。
+    画面のある環境（Windows の CI ランナーなど）で本物のダイアログが開くと
+    誰も閉じられず、テストが固まってしまうため。
+    ここで確かめたいのは「別プロセスから orihon を import して
+    printdialog までたどり着けるか」なので、これで十分。
+    """
     import subprocess
     import sys
 
     from orihon import winprint
 
-    pdf = impose.write_test_pdf(tmp_path / "s.pdf", pages=1, size="A7")
-    cmd = winprint._fallback_dialog_command(pdf)
+    missing = tmp_path / "ここには無い.pdf"
+    cmd = winprint._fallback_dialog_command(missing)
     env, cwd = winprint._fallback_dialog_env()
-    # tkinter が無い環境では「開くだけ」に落ちて 1 を返す。落ちなければ十分。
     proc = subprocess.run([sys.executable] + cmd[1:], env=env, cwd=cwd,
                           capture_output=True, text=True, timeout=60)
-    assert proc.returncode in (0, 1), proc.stderr
+    assert proc.returncode == 1, proc.stderr
     assert "Traceback" not in proc.stderr
+    assert "見つかりません" in proc.stderr
+
+
+def test_watcher_cleans_up_stale_claim_files(cfg):
+    """消しそこねた作業ファイルが、あとで片付けられること。
+
+    Windows では、直前まで読んでいた PDF をすぐには消せないことがある。
+    """
+    import os as _os
+    import time as _time
+
+    from orihon import watcher as _watcher
+
+    spool = cfg.resolved_spool_dir()
+    spool.mkdir(parents=True, exist_ok=True)
+    stale = spool / f"job.pdf.999{_watcher.CLAIM_SUFFIX}"
+    stale.write_bytes(b"%PDF")
+    _os.utime(stale, (0, 0))                       # ずっと前のもの
+    fresh = spool / f"job.pdf.111{_watcher.CLAIM_SUFFIX}"
+    fresh.write_bytes(b"%PDF")                     # いま処理中かもしれないもの
+
+    _watcher.Watcher(cfg).cleanup_stale_claims()
+
+    assert not stale.exists()
+    assert fresh.exists()
+    assert _time.time() > 0
+
+
+def test_quarantine_falls_back_to_copying(cfg, monkeypatch):
+    """リネームできないときは、コピーしてから消すこと。"""
+    import os as _os
+
+    from orihon import watcher as _watcher
+
+    spool = cfg.resolved_spool_dir()
+    spool.mkdir(parents=True, exist_ok=True)
+    claimed = spool / f"job.pdf.1{_watcher.CLAIM_SUFFIX}"
+    claimed.write_bytes(b"not a pdf")
+
+    real_replace = _os.replace
+
+    def refuse_replace(src, dst):
+        if str(src).endswith(_watcher.CLAIM_SUFFIX):
+            raise PermissionError("使用中です")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(_watcher.os, "replace", refuse_replace)
+    # 待ち時間を無くして速く回す
+    original_retry = _watcher._retry_file_op
+    monkeypatch.setattr(
+        _watcher, "_retry_file_op",
+        lambda op, attempts=4, delay=0.2: original_retry(op, attempts=2, delay=0.0),
+    )
+
+    _watcher.Watcher(cfg)._quarantine(claimed)
+
+    assert not claimed.exists()
+    assert len(list((cfg.processed_dir() / "failed").glob("*.pdf"))) == 1
 
 
 def test_open_file_never_raises(tmp_path, monkeypatch):
