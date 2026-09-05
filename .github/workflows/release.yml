@@ -16,10 +16,11 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # タグ push のときはそのタグ、手動実行のときは実行元のブランチを取る。
+      # （手動実行はタグをまだ作っていない状態でも使えるようにしてある）
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-python@v5
         with:
@@ -92,9 +93,20 @@ jobs:
       - name: リリースを作る
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            --title "${{ steps.version.outputs.tag }}" \
-            --notes-file release-notes.md \
-            "${{ steps.package.outputs.zip }}" \
-            "installer/bootstrap.ps1"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "既にリリースがあるので、配布ファイルだけ差し替えます"
+            gh release upload "$TAG" \
+              "${{ steps.package.outputs.zip }}" "installer/bootstrap.ps1" --clobber
+          else
+            # タグがまだ無ければ、いまのコミットに作られる
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "$TAG" \
+              --notes-file release-notes.md \
+              "${{ steps.package.outputs.zip }}" \
+              "installer/bootstrap.ps1"
+          fi
+          echo "公開しました:"
+          gh release view "$TAG" --json tagName,url,assets --jq '.tagName, .url, (.assets[].name)' 
