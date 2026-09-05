@@ -31,7 +31,8 @@
 - **出力**
   - 面付け後に PDF を開いて印刷ダイアログを出す（既定）
   - SumatraPDF / Ghostscript / PDFtoPrinter / ShellExecute による無人印刷
-  - 追加ソフト不要の内蔵プリンタ選択ダイアログ
+  - 追加ソフト不要の内蔵プリンタ選択ダイアログ（画面が無い環境では
+    PDF を開くだけに落として、黙って失敗しないようにしてある）
 - **自動更新**
   - GitHub のリリースを見て新しい版を知らせる（既定は通知のみ）
   - `orihon update` での更新、設定による自動更新、更新前の自動バックアップ
@@ -39,7 +40,7 @@
 - **その他**
   - 設定画面（tkinter）とコマンドライン（`impose` / `watch` / `gui` / `layouts` /
     `printers` / `selftest` / `config` / `update` / `doctor`）
-  - 156 件のテストと、レイアウト定義から生成する面付け図
+  - 158 件のテストと、レイアウト定義から生成する面付け図
 
 [Unreleased]: https://github.com/kiwiman0706-beep/a7leafletprinter/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/kiwiman0706-beep/a7leafletprinter/releases/tag/v0.1.0

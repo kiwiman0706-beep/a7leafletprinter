@@ -453,7 +453,7 @@ orihon config --set update_auto_install=true
 
 ```bash
 pip install -e ".[dev]"
-pytest                          # 156 件のテスト
+pytest                          # 158 件のテスト
 python tools/make_diagrams.py   # docs/images/*.svg を再生成
 ```
 

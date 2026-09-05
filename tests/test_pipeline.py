@@ -334,3 +334,61 @@ def test_open_file_never_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(winprint.os, "startfile", boom, raising=False)
     outcome = winprint.open_file(tmp_path / "どこかの.pdf")
     assert outcome.method == "開けず"
+
+
+def test_print_dialog_falls_back_when_there_is_no_display(tmp_path, monkeypatch):
+    """tkinter はあるが画面が無いとき、落ちずに PDF を開くだけにすること。
+
+    GitHub Actions のような画面の無い環境や、セッション 0 で動く
+    サービスから呼ばれた場合に起きる。ここで例外を出すと、
+    ユーザーからは「印刷しても何も起きない」ように見えてしまう。
+    """
+    import sys
+    import types
+
+    from orihon import winprint
+
+    class FakeTclError(Exception):
+        pass
+
+    def boom(*_a, **_k):
+        raise FakeTclError("no display name and no $DISPLAY environment variable")
+
+    fake_tk = types.ModuleType("tkinter")
+    fake_tk.TclError = FakeTclError
+    fake_tk.Tk = boom
+    fake_ttk = types.ModuleType("tkinter.ttk")
+    fake_messagebox = types.ModuleType("tkinter.messagebox")
+    monkeypatch.setitem(sys.modules, "tkinter", fake_tk)
+    monkeypatch.setitem(sys.modules, "tkinter.ttk", fake_ttk)
+    monkeypatch.setitem(sys.modules, "tkinter.messagebox", fake_messagebox)
+
+    opened = []
+    monkeypatch.setattr(winprint, "open_file", lambda p: opened.append(p))
+
+    from orihon import printdialog
+
+    pdf = impose.write_test_pdf(tmp_path / "s.pdf", pages=1, size="A7")
+    assert printdialog.show(pdf) == 1
+    assert opened == [pdf]
+
+
+def test_print_dialog_falls_back_when_tkinter_is_missing(tmp_path, monkeypatch):
+    import builtins
+
+    from orihon import printdialog, winprint
+
+    real_import = builtins.__import__
+
+    def no_tkinter(name, *args, **kwargs):
+        if name == "tkinter":
+            raise ImportError("No module named 'tkinter'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_tkinter)
+    opened = []
+    monkeypatch.setattr(winprint, "open_file", lambda p: opened.append(p))
+
+    pdf = impose.write_test_pdf(tmp_path / "s.pdf", pages=1, size="A7")
+    assert printdialog.show(pdf) == 1
+    assert opened == [pdf]
