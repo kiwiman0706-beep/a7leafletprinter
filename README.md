@@ -86,8 +86,9 @@ powershell -ExecutionPolicy Bypass -File .\installer\Install-OrihonPrinter.ps1
      A7 を選べないアプリなら A4 のままでも構いません（自動で縮小配置します）。
    * ページ数は **8 の倍数**にすると無駄がありません。足りない分は白紙になります。
 2. 面付けされた PDF が `ドキュメント\OrihonPrinter\` にでき、
-   既定の設定ではそのまま PDF ビューアで開きます。
-3. その PDF を **A4・片面・等倍（100%／フチなしではない）** で印刷します。
+   **そのまま開いて印刷ダイアログが出ます**。送り先のプリンタ・部数・両面などは
+   ここで選んでください（`output_mode` で挙動は変えられます）。
+3. **A4・片面・等倍（100%／「用紙に合わせる」ではない）** で印刷します。
 4. [折り方](#折り方)のとおりに折れば折本の完成です。
 
 設定を変えるには:
@@ -138,8 +139,8 @@ C:\ProgramData\OrihonPrinter\設定を開く.cmd
 | `fit` | `contain` | `contain`=縦横比を保つ / `stretch`=パネルいっぱいに伸ばす |
 | `fill` | `blank` | ページが足りないとき `blank`=白紙 / `repeat`=先頭から繰り返す |
 | `max_sheets` | `0` | 出力する用紙の最大枚数（0 で無制限） |
-| `output_mode` | `open` | `open`=ビューアで開く / `print`=プリンタへ送る / `save`=保存だけ |
-| `target_printer` | `""` | `print` のときの送り先。空なら通常使うプリンタ |
+| `output_mode` | `dialog` | `dialog`=開いて印刷ダイアログを出す / `open`=ビューアで開くだけ / `print`=確認なしで送る / `save`=保存だけ |
+| `target_printer` | `""` | `print`・`dialog` のときの送り先。空なら通常使うプリンタ |
 | `output_dir` | `ドキュメント\OrihonPrinter` | 出力先フォルダ |
 | `filename_template` | `{title}_{layout}_{timestamp}.pdf` | `{title}` `{stem}` `{layout}` `{timestamp}` `{date}` `{time}` が使えます |
 | `keep_source` | `false` | 面付け前の元 PDF も残す |
@@ -187,7 +188,10 @@ orihon impose 原稿.pdf -o 折本.pdf
 # レイアウトや用紙を指定する
 orihon impose 原稿.pdf --layout orihon8-right --paper B5 --guides full
 
-# 面付けしてそのままプリンタへ
+# 面付けして、開いて印刷ダイアログを出す
+orihon impose 原稿.pdf --print-dialog
+
+# 面付けして確認なしでプリンタへ送る
 orihon impose 原稿.pdf --print-to "EPSON PX-S5010"
 
 # スプールを監視しつづける（常駐プロセスの実体）
@@ -209,6 +213,9 @@ orihon selftest --open
 orihon config
 orihon config --set layout=orihon8-right --set output_mode=print
 
+# PDF を指定してプリンタ選択ダイアログだけ開く（内蔵ダイアログの単体起動）
+orihon printdialog 折本.pdf
+
 # 環境チェック
 orihon doctor
 ```
@@ -218,22 +225,44 @@ Windows 以外（macOS / Linux）でも、仮想プリンタ以外の機能
 
 ---
 
-## 実プリンタへ自動で送る
+## 実プリンタへ送る
 
-`output_mode` を `print` にすると、面付けした PDF をそのままプリンタへ流します。
+### 印刷ダイアログを出す（既定・`output_mode: dialog`）
+
+面付けが終わると PDF が開き、そのまま印刷ダイアログが出ます。
+送り先・部数・両面・用紙トレイをその場で選べるので、ふだんはこれが一番使いやすいはずです。
+使える手段を上から順に試します。
+
+1. **SumatraPDF** の `-print-dialog` … **Windows 本来の印刷ダイアログ**がそのまま出ます
+   （`winget install SumatraPDF.SumatraPDF`。おすすめ）
+2. **Adobe Acrobat / Reader** の `/p` … 同じく本来の印刷ダイアログ
+3. **orihon 内蔵のダイアログ** … 追加ソフト不要。プリンタと部数だけ選べます
+
+いずれも**呼び出し側を待たせません**。ダイアログを開いたまま放置しても、
+次の印刷ジョブはそのまま処理されます。
+
+### 確認なしで送る（`output_mode: print`）
+
+同人誌の増刷のように毎回同じ設定で刷るなら、こちらのほうが速いです。
 PDF を無人で印刷する標準 API が Windows に無いため、使えるものを順に試します。
 
-1. **SumatraPDF** … `winget install SumatraPDF.SumatraPDF`（いちばん素直で速い）
+1. **SumatraPDF** … `-print-to`（いちばん素直で速い）
 2. **Ghostscript** … `winget install ArtifexSoftware.GhostScript`
 3. **PDFtoPrinter**
 4. 既定の PDF ビューアの `printto` 動詞
 5. どれも無ければ PDF を開くだけ（手で印刷してください）
+
+### そのほか
+
+* `output_mode: open` … PDF を開くだけ。あとは手動
+* `output_mode: save` … フォルダに保存するだけ。ダイアログもビューアも出ません
 
 いま何が使えるかは `orihon printers` で確認できます。
 
 > **印刷設定の注意**：折り位置がずれないよう、実プリンタ側では
 > **「実際のサイズ」「100%」「拡大縮小なし」** で印刷してください。
 > 「用紙に合わせる」だと少しだけ縮小されて、折り目と紙の端が合わなくなります。
+> 内蔵ダイアログにはこの注意書きを常に出しています。
 
 ---
 
@@ -247,6 +276,8 @@ PDF を無人で印刷する標準 API が Windows に無いため、使える�
 | 文字が小さすぎる | 仮想プリンタのプロパティで用紙を **A7** にしてから印刷してください（A4 で刷ると 1/2.83 に縮みます） |
 | 端が切れる | `safe_margin_mm` を大きく（5〜8mm）してください |
 | 折り目と紙の端が合わない | 実プリンタ側で「拡大縮小なし・100%」にしてください |
+| 印刷ダイアログが簡素すぎる | `winget install SumatraPDF.SumatraPDF` を入れると Windows 本来の印刷ダイアログが出ます |
+| ダイアログを出さずに刷りたい | `orihon config --set output_mode=print --set target_printer="プリンタ名"` |
 | ログを見たい | `C:\ProgramData\OrihonPrinter\logs\orihon.log` |
 
 ---
@@ -255,7 +286,7 @@ PDF を無人で印刷する標準 API が Windows に無いため、使える�
 
 ```bash
 pip install -e ".[dev]"
-pytest                          # 69 件のテスト
+pytest                          # 78 件のテスト
 python tools/make_diagrams.py   # docs/images/*.svg を再生成
 ```
 
@@ -272,7 +303,8 @@ src/orihon/
   config.py    設定の読み書き
   job.py       1 ジョブ分の処理（面付け → 出力）
   watcher.py   スプールフォルダの監視
-  winprint.py  Windows のプリンタ一覧・PDF 送出
+  winprint.py  Windows のプリンタ一覧・PDF 送出・印刷ダイアログの起動
+  printdialog.py 内蔵のプリンタ選択ダイアログ（tkinter）
   gui.py       設定画面（tkinter）
   cli.py       コマンドライン
 installer/     仮想プリンタのインストーラ（PowerShell）

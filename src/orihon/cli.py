@@ -80,7 +80,10 @@ def cmd_impose(args: argparse.Namespace) -> int:
         print(f"エラー: {exc}", file=sys.stderr)
         return 1
     print(result.describe())
-    if args.print_to is not None:
+    if args.print_dialog:
+        outcome = winprint.show_print_dialog(out, args.print_to or "")
+        print(f"出力動作   : {outcome}")
+    elif args.print_to is not None:
         outcome = winprint.print_pdf(out, args.print_to)
         print(f"出力動作   : {outcome}")
     elif args.open:
@@ -139,8 +142,12 @@ def cmd_printers(_args: argparse.Namespace) -> int:
         print("  (* = 通常使うプリンタ)")
     else:
         print("プリンタを列挙できませんでした（Windows 以外か pywin32 未導入）")
+    print("\n印刷ダイアログを出せる手段:")
+    for label, where in winprint.dialog_backends().items():
+        print(f"  {label}: {where}")
+
     backends = winprint.available_backends()
-    print("\n使える印刷バックエンド:")
+    print("\n無人印刷に使えるバックエンド:")
     if backends:
         for label, where in backends.items():
             print(f"  {label}: {where}")
@@ -165,6 +172,16 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     if args.open:
         winprint.open_file(result.output)
     return 0
+
+
+def cmd_printdialog(args: argparse.Namespace) -> int:
+    from . import printdialog
+
+    path = Path(args.pdf)
+    if not path.is_file():
+        print(f"PDF が見つかりません: {path}", file=sys.stderr)
+        return 1
+    return printdialog.show(path, args.printer or "")
 
 
 def cmd_config(args: argparse.Namespace) -> int:
@@ -280,8 +297,15 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
                   "→ installer\\Install-OrihonPrinter.ps1 を管理者権限で実行してください")
             ok = False
         backends = winprint.available_backends()
-        print(f"[{'OK' if backends else '--'}] 印刷バックエンド: "
+        print(f"[{'OK' if backends else '--'}] 無人印刷バックエンド: "
               + (", ".join(backends) if backends else "なし（PDF を開くだけになります）"))
+
+    viewers = [k for k in winprint.dialog_backends() if k != "orihon 内蔵のプリンタ選択ダイアログ"]
+    if viewers:
+        print(f"[OK] 印刷ダイアログ: {', '.join(viewers)}")
+    else:
+        print("[--] 印刷ダイアログ: orihon 内蔵のもの（プリンタと部数だけ選べます）。"
+              "SumatraPDF を入れると Windows 本来の印刷ダイアログが出せます")
 
     for layout in layouts.PRESETS.values():
         try:
@@ -308,7 +332,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--open", action="store_true", help="出力を既定のビューアで開く")
     p.add_argument(
         "--print-to", nargs="?", const="", metavar="PRINTER",
-        help="出力をそのままプリンタへ送る（名前を省くと通常使うプリンタ）",
+        help="出力を確認なしでそのままプリンタへ送る（名前を省くと通常使うプリンタ）",
+    )
+    p.add_argument(
+        "--print-dialog", action="store_true",
+        help="出力を開いて印刷ダイアログを出す（--print-to と併用すると初期選択になる）",
     )
     _add_impose_options(p)
     p.set_defaults(func=cmd_impose)
@@ -336,6 +364,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--open", action="store_true", help="結果を既定のビューアで開く")
     _add_impose_options(p)
     p.set_defaults(func=cmd_selftest)
+
+    p = sub.add_parser(
+        "printdialog",
+        help="PDF を指定してプリンタ選択ダイアログを開く（内部利用）",
+    )
+    p.add_argument("pdf", help="印刷する PDF")
+    p.add_argument("--printer", help="最初に選んでおくプリンタ名")
+    p.set_defaults(func=cmd_printdialog)
 
     p = sub.add_parser("config", help="設定を表示・変更する")
     p.add_argument("--set", action="append", metavar="キー=値", help="設定を書き換える")

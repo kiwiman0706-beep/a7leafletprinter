@@ -136,3 +136,28 @@ def test_doctor_reports_a_running_watcher(home, capsys, monkeypatch):
     monkeypatch.setattr(_watcher, "running_pid", lambda cfg: 4242)
     cli.main(["doctor"])
     assert "PID 4242" in capsys.readouterr().out
+
+
+def test_impose_print_dialog_flag(home, tmp_path, monkeypatch, capsys):
+    from orihon import winprint
+
+    launched = []
+    monkeypatch.setattr(winprint, "_launch", lambda cmd, **kw: launched.append(cmd))
+    src = impose.write_test_pdf(tmp_path / "s.pdf", pages=8, size="A7")
+    out = tmp_path / "o.pdf"
+
+    assert cli.main(["impose", str(src), "-o", str(out), "--print-dialog"]) == 0
+    assert len(launched) == 1
+    assert "出力動作" in capsys.readouterr().out
+
+
+def test_printdialog_rejects_missing_file(home, tmp_path, capsys):
+    assert cli.main(["printdialog", str(tmp_path / "ない.pdf")]) == 1
+    assert "見つかりません" in capsys.readouterr().err
+
+
+def test_printers_lists_dialog_backends(home, capsys):
+    assert cli.main(["printers"]) == 0
+    out = capsys.readouterr().out
+    assert "印刷ダイアログを出せる手段" in out
+    assert "無人印刷" in out

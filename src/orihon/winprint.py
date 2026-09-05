@@ -10,6 +10,10 @@ PDF を「無人で」印刷する標準 API は Windows に無いため、使�
 5. 既定ビューアで開く（＝ユーザーが手で印刷）
 
 Windows 以外では 5 だけが動く。
+
+「印刷ダイアログを出してユーザーに選ばせる」場合は ``show_print_dialog()`` を
+使う。こちらは無人印刷とちがって**ユーザーの操作を待つ**ので、呼び出し側を
+止めないように常に非同期（プロセスを起動して即座に戻る）で動く。
 """
 
 from __future__ import annotations
@@ -41,6 +45,12 @@ _GS_CANDIDATES = (
 _PDFTOPRINTER_CANDIDATES = (
     r"%LOCALAPPDATA%\PDFtoPrinter\PDFtoPrinter.exe",
     r"%ProgramFiles%\PDFtoPrinter\PDFtoPrinter.exe",
+)
+_ACROBAT_CANDIDATES = (
+    r"%ProgramFiles%\Adobe\Acrobat DC\Acrobat\Acrobat.exe",
+    r"%ProgramFiles%\Adobe\Acrobat\Acrobat\Acrobat.exe",
+    r"%ProgramFiles(x86)%\Adobe\Acrobat Reader DC\Reader\AcroRd32.exe",
+    r"%ProgramFiles(x86)%\Adobe\Reader 11.0\Reader\AcroRd32.exe",
 )
 
 
@@ -147,6 +157,10 @@ def find_pdftoprinter() -> Path | None:
     return find_tool(("PDFtoPrinter", "PDFtoPrinter.exe"), _PDFTOPRINTER_CANDIDATES)
 
 
+def find_acrobat() -> Path | None:
+    return find_tool(("AcroRd32", "Acrobat.exe"), _ACROBAT_CANDIDATES)
+
+
 def available_backends() -> dict[str, str]:
     """使える印刷バックエンドと、その実行ファイルの場所。"""
     out: dict[str, str] = {}
@@ -221,15 +235,122 @@ def _print_with_shell(pdf: Path, printer: str) -> PrintOutcome:  # pragma: no co
     return PrintOutcome(f"ShellExecute({verb})", printer or "既定のプリンタ")
 
 
-def open_file(path: Path) -> PrintOutcome:
-    """既定のアプリでファイルを開く。"""
-    path = Path(path)
+# ----------------------------------------------------------------------
+# 印刷ダイアログを出す（ユーザーが送り先・部数・両面などを選ぶ）
+# ----------------------------------------------------------------------
+def _launch(cmd: list[str], **kwargs: object) -> None:
+    """対話的なプロセスを起動して、待たずに戻る。
+
+    印刷ダイアログはユーザーの操作を待つので、``subprocess.run`` で待つと
+    監視ループが最大数分止まってしまう。必ず起動しっぱなしにする。
+    """
+    logger.debug("launch: %s", cmd)
+    subprocess.Popen(cmd, creationflags=_NO_WINDOW, **kwargs)  # noqa: S603
+
+
+def _fallback_dialog_command(pdf: Path) -> list[str]:
+    """自前のプリンタ選択ダイアログを別プロセスで開くコマンドを組み立てる。
+
+    別プロセスにするのは 2 つの理由から:
+    tkinter はメインスレッドでしか動かせない（監視はスレッドで回っている）ことと、
+    ダイアログの応答を待つ間も監視を続けたいこと。
+    """
+    exe = Path(sys.executable)
+    if os.name == "nt":
+        # コンソールを出さない pythonw.exe があればそちらを使う
+        pythonw = exe.with_name("pythonw.exe")
+        if pythonw.is_file():
+            exe = pythonw
+    return [str(exe), "-m", "orihon", "printdialog", str(pdf)]
+
+
+def _fallback_dialog_env() -> tuple[dict[str, str], str]:
+    """別プロセスから orihon を import できる環境変数と作業フォルダ。"""
+    src_dir = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{existing}" if existing else str(src_dir)
+    return env, str(src_dir)
+
+
+def dialog_backends() -> dict[str, str]:
+    """印刷ダイアログを出せる手段と、その実行ファイルの場所。"""
+    out: dict[str, str] = {}
+    exe = find_sumatra()
+    if exe:
+        out["SumatraPDF"] = str(exe)
+    exe = find_acrobat()
+    if exe:
+        out["Adobe Acrobat/Reader"] = str(exe)
+    out["orihon 内蔵のプリンタ選択ダイアログ"] = "同梱"
+    return out
+
+
+def show_print_dialog(pdf: str | Path, prefer_printer: str = "") -> PrintOutcome:
+    """PDF を開いて Windows の印刷ダイアログを出す。
+
+    無人印刷とちがい、送り先・部数・両面・拡大縮小をユーザーが選べる。
+    使える手段を上から順に試す:
+
+    1. SumatraPDF ``-print-dialog`` … Windows 本来の印刷ダイアログがそのまま出る
+    2. Adobe Acrobat / Reader ``/p``  … 同上
+    3. orihon 内蔵のダイアログ        … プリンタと部数だけを選んで送る
+
+    どれも即座に戻る（ユーザーの操作は待たない）。
+    """
+    pdf = Path(pdf)
+    if not pdf.is_file():
+        raise PrintError(f"PDF が見つかりません: {pdf}")
+
+    errors: list[str] = []
+
     if IS_WINDOWS:
-        os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606
-    elif sys.platform == "darwin":
-        subprocess.run(["open", str(path)], check=False)
-    else:
-        subprocess.run(["xdg-open", str(path)], check=False)
+        exe = find_sumatra()
+        if exe:
+            try:
+                _launch([str(exe), "-print-dialog", "-exit-when-done", str(pdf)])
+                return PrintOutcome("SumatraPDF の印刷ダイアログ", str(pdf))
+            except OSError as exc:
+                errors.append(f"SumatraPDF: {exc}")
+
+        exe = find_acrobat()
+        if exe:
+            try:
+                _launch([str(exe), "/p", "/h", str(pdf)])
+                return PrintOutcome("Acrobat の印刷ダイアログ", str(pdf))
+            except OSError as exc:
+                errors.append(f"Acrobat: {exc}")
+
+    # 3. 内蔵ダイアログ（Windows 以外でも動く）
+    try:
+        env, cwd = _fallback_dialog_env()
+        _launch(_fallback_dialog_command(pdf), env=env, cwd=cwd)
+        return PrintOutcome("プリンタ選択ダイアログ", str(pdf))
+    except OSError as exc:
+        errors.append(f"内蔵ダイアログ: {exc}")
+
+    logger.warning("印刷ダイアログを出せませんでした: %s", " | ".join(errors))
+    open_file(pdf)
+    return PrintOutcome("開く（ダイアログを出せず）", f"{pdf} / {' | '.join(errors)}")
+
+
+def open_file(path: Path) -> PrintOutcome:
+    """既定のアプリでファイルを開く。
+
+    開けなかった場合も例外は投げず、失敗を表す ``PrintOutcome`` を返す。
+    これは最後の受け皿なので、ここで落ちると呼び出し側が軒並み道連れになる。
+    """
+    path = Path(path)
+    try:
+        if IS_WINDOWS:
+            os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(path)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(path)], check=False)
+    except OSError as exc:
+        logger.warning("ファイルを開けませんでした: %s: %s", path, exc)
+        return PrintOutcome("開けず", f"{path}: {exc}")
     return PrintOutcome("開く", str(path))
 
 

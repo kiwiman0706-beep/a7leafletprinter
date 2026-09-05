@@ -37,8 +37,9 @@ FIT_CHOICES = [("contain", "縦横比を保って収める"), ("stretch", "パ�
 FILL_CHOICES = [("blank", "白紙で埋める"), ("repeat", "先頭ページから繰り返す")]
 ORIENTATION_CHOICES = [("auto", "自動"), ("portrait", "縦"), ("landscape", "横")]
 OUTPUT_CHOICES = [
-    ("open", "PDF ビューアで開く"),
-    ("print", "そのままプリンタへ送る"),
+    ("dialog", "PDF を開いて印刷ダイアログを出す（おすすめ）"),
+    ("open", "PDF ビューアで開くだけ"),
+    ("print", "確認なしでそのままプリンタへ送る"),
     ("save", "フォルダに保存するだけ"),
 ]
 
@@ -206,9 +207,10 @@ class OrihonApp:
                         variable=self.v_keep_source).grid(row=4, column=1, sticky="w", pady=6)
 
         backends = winprint.available_backends()
-        text = ("使える印刷バックエンド: " + ", ".join(backends)) if backends else (
-            "自動印刷できるツールが見つかりません。"
-            "SumatraPDF か Ghostscript を入れると「プリンタへ送る」が使えます。"
+        text = "印刷ダイアログ: " + ", ".join(winprint.dialog_backends()) + "\n"
+        text += ("無人印刷: " + ", ".join(backends)) if backends else (
+            "無人印刷できるツールが見つかりません。"
+            "SumatraPDF か Ghostscript を入れると「確認なしで送る」が使えます。"
         )
         ttk.Label(frame, text=text, foreground="#666", wraplength=620).grid(
             row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))

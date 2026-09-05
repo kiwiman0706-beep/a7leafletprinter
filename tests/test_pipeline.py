@@ -240,3 +240,97 @@ def test_single_instance_refuses_live_process(tmp_path):
     with pytest.raises(RuntimeError, match="既に動いています"):
         with watcher.SingleInstance(lock):
             pass
+
+
+# ----------------------------------------------------------------------
+# 印刷ダイアログ
+# ----------------------------------------------------------------------
+def test_dialog_mode_launches_without_blocking(cfg, tmp_path, monkeypatch):
+    """output_mode="dialog" はダイアログを起動して、待たずに戻ること。
+
+    ここで待ってしまうと、ユーザーがダイアログを操作するまで監視が止まる。
+    """
+    from orihon import winprint
+
+    launched = []
+    monkeypatch.setattr(winprint, "_launch", lambda cmd, **kw: launched.append(cmd))
+    cfg.output_mode = "dialog"
+    src = impose.write_test_pdf(tmp_path / "s.pdf", pages=8, size="A7")
+
+    result = job.process_pdf(src, cfg)
+
+    assert len(launched) == 1
+    assert "printdialog" in launched[0]
+    assert str(result.output) in launched[0]
+    assert result.outcome is not None and "ダイアログ" in result.outcome.method
+
+
+def test_dialog_prefers_sumatra_when_present(tmp_path, monkeypatch):
+    from orihon import winprint
+
+    fake = tmp_path / "SumatraPDF.exe"
+    fake.write_text("")
+    launched = []
+    monkeypatch.setattr(winprint, "IS_WINDOWS", True)
+    monkeypatch.setattr(winprint, "find_sumatra", lambda: fake)
+    monkeypatch.setattr(winprint, "_launch", lambda cmd, **kw: launched.append(cmd))
+
+    pdf = impose.write_test_pdf(tmp_path / "s.pdf", pages=1, size="A7")
+    outcome = winprint.show_print_dialog(pdf)
+
+    assert "SumatraPDF" in outcome.method
+    assert launched[0][:3] == [str(fake), "-print-dialog", "-exit-when-done"]
+
+
+def test_dialog_falls_back_to_acrobat(tmp_path, monkeypatch):
+    from orihon import winprint
+
+    fake = tmp_path / "AcroRd32.exe"
+    fake.write_text("")
+    launched = []
+    monkeypatch.setattr(winprint, "IS_WINDOWS", True)
+    monkeypatch.setattr(winprint, "find_sumatra", lambda: None)
+    monkeypatch.setattr(winprint, "find_acrobat", lambda: fake)
+    monkeypatch.setattr(winprint, "_launch", lambda cmd, **kw: launched.append(cmd))
+
+    pdf = impose.write_test_pdf(tmp_path / "s.pdf", pages=1, size="A7")
+    outcome = winprint.show_print_dialog(pdf)
+
+    assert "Acrobat" in outcome.method
+    assert launched[0] == [str(fake), "/p", "/h", str(pdf)]
+
+
+def test_dialog_rejects_missing_pdf(tmp_path):
+    from orihon import winprint
+
+    with pytest.raises(winprint.PrintError, match="見つかりません"):
+        winprint.show_print_dialog(tmp_path / "ない.pdf")
+
+
+def test_fallback_dialog_command_is_importable(tmp_path):
+    """内蔵ダイアログを別プロセスで起動するコマンドが実際に import できること。"""
+    import subprocess
+    import sys
+
+    from orihon import winprint
+
+    pdf = impose.write_test_pdf(tmp_path / "s.pdf", pages=1, size="A7")
+    cmd = winprint._fallback_dialog_command(pdf)
+    env, cwd = winprint._fallback_dialog_env()
+    # tkinter が無い環境では「開くだけ」に落ちて 1 を返す。落ちなければ十分。
+    proc = subprocess.run([sys.executable] + cmd[1:], env=env, cwd=cwd,
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode in (0, 1), proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_open_file_never_raises(tmp_path, monkeypatch):
+    from orihon import winprint
+
+    def boom(*_a, **_k):
+        raise OSError("ビューアがありません")
+
+    monkeypatch.setattr(winprint.subprocess, "run", boom)
+    monkeypatch.setattr(winprint.os, "startfile", boom, raising=False)
+    outcome = winprint.open_file(tmp_path / "どこかの.pdf")
+    assert outcome.method == "開けず"

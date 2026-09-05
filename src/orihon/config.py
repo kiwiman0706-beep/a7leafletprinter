@@ -46,7 +46,7 @@ def default_output_dir() -> Path:
     return docs / APP_NAME
 
 
-OutputMode = Literal["open", "print", "save"]
+OutputMode = Literal["open", "dialog", "print", "save"]
 
 
 @dataclass
@@ -65,9 +65,10 @@ class Config:
     debug_numbers: bool = False
 
     # --- 出力 ---
-    #: open=既定のビューアで開く / print=実プリンタへ送る / save=保存だけ
-    output_mode: OutputMode = "open"
-    #: output_mode="print" のときの送り先プリンタ名（空なら通常使うプリンタ）
+    #: open=既定のビューアで開く / dialog=印刷ダイアログを出す /
+    #: print=無人で実プリンタへ送る / save=保存だけ
+    output_mode: OutputMode = "dialog"
+    #: output_mode="print"/"dialog" のときの送り先プリンタ名（空なら通常使うプリンタ）
     target_printer: str = ""
     output_dir: str = ""
     #: 出力ファイル名のテンプレート（strftime とプレースホルダが使える）
@@ -135,7 +136,7 @@ class Config:
             problems.append(f"fit が不正です: {self.fit!r}")
         if self.fill not in ("blank", "repeat"):
             problems.append(f"fill が不正です: {self.fill!r}")
-        if self.output_mode not in ("open", "print", "save"):
+        if self.output_mode not in ("open", "dialog", "print", "save"):
             problems.append(f"output_mode が不正です: {self.output_mode!r}")
         if self.safe_margin_mm < 0:
             problems.append("safe_margin_mm は 0 以上にしてください")

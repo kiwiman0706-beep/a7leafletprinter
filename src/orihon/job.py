@@ -124,6 +124,12 @@ def process_pdf(
         except winprint.PrintError as exc:
             logger.error("印刷に失敗しました: %s", exc)
             outcome = winprint.PrintOutcome("印刷失敗", str(exc))
+    elif cfg.output_mode == "dialog":
+        try:
+            outcome = winprint.show_print_dialog(output, cfg.target_printer)
+        except (winprint.PrintError, OSError) as exc:
+            logger.error("印刷ダイアログを出せませんでした: %s", exc)
+            outcome = winprint.PrintOutcome("ダイアログ失敗", str(exc))
     elif cfg.output_mode == "open":
         try:
             outcome = winprint.open_file(output)

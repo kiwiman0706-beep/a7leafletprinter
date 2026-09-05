@@ -240,9 +240,14 @@ Write-Host ""
 Write-Host "セットアップが終わりました。" -ForegroundColor Green
 Write-Host ""
 Write-Host "  1. 好きなアプリの印刷ダイアログで「$PrinterName」を選んで印刷します。"
-Write-Host "  2. 面付けされた PDF が作られ、設定に応じて開かれる／印刷されます。"
+Write-Host "  2. 面付けされた PDF が開き、そのまま印刷ダイアログが出ます。"
 Write-Host "  3. 設定を変えるには「$openSettings」を実行してください。"
 Write-Host ""
+if (-not (Get-Command "SumatraPDF" -ErrorAction SilentlyContinue)) {
+    Write-Host "  ヒント: winget install SumatraPDF.SumatraPDF を入れておくと、" -ForegroundColor Yellow
+    Write-Host "          Windows 本来の印刷ダイアログ（両面・トレイ指定など）が出せます。" -ForegroundColor Yellow
+    Write-Host ""
+}
 Write-Host "  スプール : $SpoolDir"
 Write-Host "  ログ     : $(Join-Path $DataDir 'logs\orihon.log')"
 Write-Host ""
