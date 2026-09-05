@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orihon-printer"
+version = "1.0.0"
+description = "折本（おりほん）の面付けをする Windows 仮想プリンタ"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["pymupdf>=1.23"]
+
+[project.optional-dependencies]
+windows = ["pywin32>=306"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+orihon = "orihon.cli:main"
+
+[project.gui-scripts]
+orihon-gui = "orihon.gui:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
