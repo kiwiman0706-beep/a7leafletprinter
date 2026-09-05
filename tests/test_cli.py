@@ -161,3 +161,32 @@ def test_printers_lists_dialog_backends(home, capsys):
     out = capsys.readouterr().out
     assert "印刷ダイアログを出せる手段" in out
     assert "無人印刷" in out
+
+
+def test_output_survives_a_non_utf8_locale(tmp_path):
+    """出力をリダイレクトしても、日本語で落ちないこと。
+
+    Windows で出力をファイルやパイプに向けると、その環境のコードページ
+    （英語版なら cp1252）でエンコードしようとして UnicodeEncodeError になる。
+    コンソールに直接出す分には起きないので気づきにくい。
+    ここでは PYTHONIOENCODING で同じ状況を作って確かめている。
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    src_dir = Path(__file__).resolve().parents[1] / "src"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(src_dir) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONIOENCODING"] = "cp1252"
+    env["ORIHON_HOME"] = str(tmp_path / "home")
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "orihon", "layouts", "-v"],
+        capture_output=True, env=env, cwd=str(src_dir), timeout=60,
+    )
+
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    assert "折本".encode() in proc.stdout      # UTF-8 でそのまま出ている
+    assert b"charmap" not in proc.stderr

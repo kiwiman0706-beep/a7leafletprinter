@@ -23,7 +23,8 @@ except ImportError as exc:  # pragma: no cover - tkinter 無し環境
         f"詳細: {exc}"
     ) from None
 
-from . import __version__, config, impose, job, layouts, paper, update, watcher, winprint
+from . import (__version__, config, configure_stdio, impose, job, layouts, paper,
+               update, watcher, winprint)
 
 logger = logging.getLogger(__name__)
 
@@ -565,6 +566,7 @@ def _value_for(choices: list[tuple[str, str]], label: str) -> str:
 
 
 def main() -> int:
+    configure_stdio()
     cfg = config.load_or_create()
     watcher.setup_logging(cfg, to_console=False)
     root = tk.Tk()

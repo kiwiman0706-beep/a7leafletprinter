@@ -14,7 +14,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import __version__, config, impose, layouts, update, watcher, winprint
+from . import __version__, config, configure_stdio, impose, layouts, update, watcher, winprint
 
 logger = logging.getLogger(__name__)
 
@@ -483,6 +483,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_stdio()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     args = build_parser().parse_args(argv)
     try:

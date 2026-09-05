@@ -41,7 +41,7 @@
 - **その他**
   - 設定画面（tkinter）とコマンドライン（`impose` / `watch` / `gui` / `layouts` /
     `printers` / `selftest` / `config` / `update` / `doctor`）
-  - 161 件のテストと、レイアウト定義から生成する面付け図
+  - 162 件のテストと、レイアウト定義から生成する面付け図
 
 [Unreleased]: https://github.com/kiwiman0706-beep/a7leafletprinter/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/kiwiman0706-beep/a7leafletprinter/releases/tag/v0.1.0
