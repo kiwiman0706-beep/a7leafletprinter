@@ -45,9 +45,30 @@ Windows の署名付きカーネルドライバーを書く必要はありませ
 | ライブラリ | `pymupdf`、`pywin32`（インストーラが自動で入れます） |
 | 実プリンタへ自動送出したい場合 | [SumatraPDF](https://www.sumatrapdfreader.org/) または Ghostscript（任意） |
 
-### 手順
+### かんたん（推奨）
 
-1. このリポジトリをダウンロード（または `git clone`）します。
+PowerShell を開いて、これ 1 行です。clone もダウンロードも要りません。
+
+```powershell
+irm https://github.com/kiwiman0706-beep/a7leafletprinter/releases/latest/download/bootstrap.ps1 | iex
+```
+
+最新リリースを取ってきて `C:\ProgramData\OrihonPrinter\app` に展開し、
+インストーラを実行します（UAC が出るので「はい」を選んでください）。
+**同じコマンドを後から実行すれば上書き更新**になります（設定・ログはそのまま）。
+
+バージョンを指定したい場合:
+
+```powershell
+$b = "$env:TEMP\bootstrap.ps1"
+irm https://github.com/kiwiman0706-beep/a7leafletprinter/releases/latest/download/bootstrap.ps1 -OutFile $b
+& $b -Version v0.1.0
+```
+
+### 手動で入れる
+
+1. [リリースページ](https://github.com/kiwiman0706-beep/a7leafletprinter/releases)から
+   `orihon-printer-x.y.z.zip` をダウンロードして展開します（`git clone` でも可）。
 2. `installer\install.cmd` をダブルクリックします。
    UAC が出るので「はい」を選んでください（プリンタとポートの追加に管理者権限が要ります）。
 3. 最後に環境チェックが走り、`[OK]` が並べば完了です。
@@ -307,6 +328,10 @@ orihon config --set layout=orihon8-right --set output_mode=print
 # PDF を指定してプリンタ選択ダイアログだけ開く（内蔵ダイアログの単体起動）
 orihon printdialog 折本.pdf
 
+# バージョンアップ
+orihon update --check
+orihon update
+
 # 環境チェック
 orihon doctor
 ```
@@ -357,6 +382,52 @@ PDF を無人で印刷する標準 API が Windows に無いため、使える�
 
 ---
 
+## バージョンアップ
+
+GitHub のリリースを見て、新しい版が出ていれば知らせます。
+**既定は「知らせるだけ」**で、勝手に入れ替えることはありません。
+
+```bash
+orihon update --check    # 確認だけ
+orihon update            # 確認して、聞いてから更新
+orihon update --yes      # 確認なしで更新
+orihon update --dry-run  # ダウンロードと検査だけして、書き換えない
+```
+
+設定画面の「更新」タブからも同じことができます。
+
+### 自動で更新する
+
+```bash
+orihon config --set update_auto_install=true
+```
+
+監視プロセスが起動時と 24 時間ごとに確認し、新しい版があれば入れ替えて
+自分を再起動します。
+
+### 更新でなにが起きるか
+
+* リリースの ZIP を取得して `src` / `installer` / `tools` / `docs` と
+  ルートの `README.md` などを入れ替えます
+* **設定・ログ・スプール・出力した PDF は触りません。** 上記以外のファイルも消しません
+* 入れ替える前に、現在の状態を `C:\ProgramData\OrihonPrinter\backups\` に
+  ZIP で保存します
+* 取得元は `orihon` に埋め込まれた GitHub リポジトリだけです。ダウンロード先は
+  https 固定で、アーカイブの外に書き出そうとするパス（zip slip）は拒否し、
+  展開後にバージョンを検査してから入れ替えます
+
+| キー | 既定値 | 説明 |
+|---|---|---|
+| `update_check` | `true` | 新しい版が出ていないか確認する |
+| `update_auto_install` | `false` | 見つけたら自動で入れ替える |
+| `update_repo` | `""` | 取得元。空なら同梱の既定値 |
+| `update_interval_hours` | `24` | 確認の間隔（時間） |
+
+`pip install` で入れた場合は `pip install -U` を使ってください
+（その場合 `orihon update` は入れ替え先が見つからない旨を伝えて止まります）。
+
+---
+
 ## トラブルシューティング
 
 | 症状 | 対処 |
@@ -372,6 +443,8 @@ PDF を無人で印刷する標準 API が Windows に無いため、使える�
 | 折り目と紙の端が合わない | 実プリンタ側で「拡大縮小なし・100%」にしてください |
 | 印刷ダイアログが簡素すぎる | `winget install SumatraPDF.SumatraPDF` を入れると Windows 本来の印刷ダイアログが出ます |
 | ダイアログを出さずに刷りたい | `orihon config --set output_mode=print --set target_printer="プリンタ名"` |
+| 更新に失敗した | `C:\ProgramData\OrihonPrinter\backups\` の ZIP を展開して戻せます |
+| 更新の確認を止めたい | `orihon config --set update_check=false` |
 | ログを見たい | `C:\ProgramData\OrihonPrinter\logs\orihon.log` |
 
 ---
@@ -380,7 +453,7 @@ PDF を無人で印刷する標準 API が Windows に無いため、使える�
 
 ```bash
 pip install -e ".[dev]"
-pytest                          # 103 件のテスト
+pytest                          # 156 件のテスト
 python tools/make_diagrams.py   # docs/images/*.svg を再生成
 ```
 
@@ -400,8 +473,11 @@ src/orihon/
   winprint.py  Windows のプリンタ一覧・PDF 送出・印刷ダイアログの起動
   printdialog.py 内蔵のプリンタ選択ダイアログ（tkinter）
   gui.py       設定画面（tkinter）
+  update.py    GitHub リリースからの自動更新
   cli.py       コマンドライン
 installer/     仮想プリンタのインストーラ（PowerShell）
+  bootstrap.ps1  リリースを取ってきて入れる 1 行インストーラ
+.github/workflows/  CI（テスト）とリリース（タグを打つと自動で公開）
 docs/          面付けの解説と図
 ```
 

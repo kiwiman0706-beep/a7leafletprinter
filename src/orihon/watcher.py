@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from . import job
-from .config import Config, load_or_create
+from . import job, update
+from .config import Config, data_home, load_or_create
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +150,8 @@ class Watcher:
         self._seen: dict[Path, _Seen] = {}
         self._stop = False
         self._last_cleanup = 0.0
+        self._last_update_check = 0.0
+        self.pending_update: update.Release | None = None
 
     # -- 制御 -------------------------------------------------------
     def stop(self) -> None:
@@ -254,6 +256,49 @@ class Watcher:
         except OSError as exc:
             logger.warning("失敗した PDF を退避できませんでした: %s", exc)
 
+    # -- 更新 -------------------------------------------------------
+    def check_for_update(self, force: bool = False) -> update.Release | None:
+        """新しい版が出ていないか確かめ、設定によっては入れ替える。
+
+        通信が失敗しても監視は止めない（更新は本来の仕事ではない）。
+        """
+        if not self.cfg.update_check:
+            return None
+        try:
+            checked = update.check_detailed(
+                data_home(),
+                repo=self.cfg.resolved_update_repo(),
+                interval_hours=self.cfg.update_interval_hours,
+                force=force,
+            )
+        except update.UpdateError as exc:  # 想定外だけ（通常は CheckResult に載る）
+            logger.warning("更新の確認に失敗しました: %s", exc)
+            return None
+        if not checked.ok:
+            logger.info("更新を確認できませんでした: %s", checked.error)
+            return None
+        release = checked.release
+        if release is None:
+            return None
+
+        self.pending_update = release
+        logger.info("新しい版があります: %s  %s", release.summary, release.html_url)
+
+        if not self.cfg.update_auto_install:
+            logger.info("自動更新は無効です（orihon update で更新できます）")
+            return release
+
+        try:
+            result = update.install(release, data_home())
+        except update.UpdateError as exc:
+            logger.error("自動更新に失敗しました: %s", exc)
+            return release
+        logger.info("%s（バックアップ: %s）", result.message, result.backup)
+        if update.restart_watcher():
+            logger.info("新しい版で動かすため、いったん終了します")
+            self.stop()
+        return release
+
     def cleanup(self) -> None:
         """古い処理済みファイルを片付ける。"""
         days = self.cfg.keep_processed_days
@@ -281,12 +326,22 @@ class Watcher:
             self.cfg.output_mode,
             f" -> {self.cfg.target_printer}" if self.cfg.target_printer else "",
         )
+        if self.cfg.update_check:
+            self.check_for_update()
+            self._last_update_check = time.monotonic()
         while not self._stop:
             try:
                 self.process_once()
                 if time.monotonic() - self._last_cleanup > 3600:
                     self.cleanup()
                     self._last_cleanup = time.monotonic()
+                if (
+                    self.cfg.update_check
+                    and time.monotonic() - self._last_update_check
+                    > self.cfg.update_interval_hours * 3600
+                ):
+                    self._last_update_check = time.monotonic()
+                    self.check_for_update()
             except Exception:  # pragma: no cover - 想定外でも監視は続ける
                 logger.exception("監視ループで例外が発生しました")
             time.sleep(self.cfg.poll_interval_sec)

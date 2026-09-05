@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "リリースするタグ (例 v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存関係を入れる
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pymupdf pytest
+
+      - name: テスト
+        run: python -m pytest -q
+
+      - name: バージョンを確かめる
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          CODE=$(python -c "import sys; sys.path.insert(0,'src'); import orihon; print(orihon.__version__)")
+          echo "タグ: $TAG / コード: $CODE"
+          if [ "$VERSION" != "$CODE" ]; then
+            echo "::error::タグ ($VERSION) と __version__ ($CODE) が食い違っています"
+            exit 1
+          fi
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: 配布 ZIP を作る
+        id: package
+        run: |
+          NAME="orihon-printer-${{ steps.version.outputs.version }}"
+          mkdir -p "dist/$NAME"
+          cp -r src installer tools docs "dist/$NAME/"
+          cp README.md CHANGELOG.md LICENSE pyproject.toml requirements.txt "dist/$NAME/"
+          find "dist/$NAME" -name '__pycache__' -type d -prune -exec rm -rf {} +
+          (cd dist && zip -qr "$NAME.zip" "$NAME")
+          echo "zip=dist/$NAME.zip" >> "$GITHUB_OUTPUT"
+          ls -la dist
+
+      - name: 中身を検査する
+        run: |
+          python - <<'PY'
+          import sys, zipfile
+          path = "${{ steps.package.outputs.zip }}"
+          with zipfile.ZipFile(path) as z:
+              names = z.namelist()
+          roots = {n.split("/")[0] for n in names}
+          assert len(roots) == 1, f"最上位フォルダが複数あります: {roots}"
+          root = roots.pop()
+          for required in ("src/orihon/__init__.py", "installer/Install-OrihonPrinter.ps1",
+                           "pyproject.toml", "README.md"):
+              assert f"{root}/{required}" in names, f"{required} がありません"
+          print(f"OK {path}: {len(names)} entries, root={root}")
+          PY
+
+      - name: リリースノートを取り出す
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python - > release-notes.md <<'PY'
+          import os, pathlib, re
+          version = re.escape(os.environ["VERSION"])
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          match = re.search(rf"^## \[?{version}\]?[^\n]*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+          body = match.group(1).strip() if match else ""
+          print(body or "変更点は CHANGELOG.md を参照してください。")
+          PY
+          cat release-notes.md
+
+      - name: リリースを作る
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes-file release-notes.md \
+            "${{ steps.package.outputs.zip }}" \
+            "installer/bootstrap.ps1"

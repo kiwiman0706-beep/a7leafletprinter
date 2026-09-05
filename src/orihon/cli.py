@@ -14,7 +14,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import __version__, config, impose, layouts, watcher, winprint
+from . import __version__, config, impose, layouts, update, watcher, winprint
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +192,64 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_update(args: argparse.Namespace) -> int:
+    cfg = config.load()
+    home = config.data_home()
+    repo = cfg.resolved_update_repo()
+    print(f"現在のバージョン : {__version__}")
+    print(f"取得元           : https://github.com/{repo}")
+
+    result = update.check_detailed(
+        home, repo=repo, interval_hours=cfg.update_interval_hours,
+        force=bool(args.force or args.check),
+    )
+    if not result.ok:
+        print(f"更新を確認できませんでした: {result.error}", file=sys.stderr)
+        return 1
+
+    release = result.release
+    if release is None:
+        print(f"最新版を使っています（{__version__}）。")
+        return 0
+
+    print(f"新しいバージョン : {release.summary}")
+    if release.html_url:
+        print(f"リリースページ   : {release.html_url}")
+    if release.notes.strip():
+        print("\n--- 変更点 ---")
+        for line in release.notes.strip().splitlines()[:20]:
+            print(f"  {line}")
+        print("---------------\n")
+
+    if args.check:
+        print("`orihon update` で更新できます。")
+        return 0
+
+    if not args.yes and sys.stdin.isatty():
+        answer = input("更新しますか？ [y/N]: ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("中止しました。")
+            return 0
+
+    try:
+        result = update.install(
+            release, home, dry_run=args.dry_run, backup=not args.no_backup
+        )
+    except update.UpdateError as exc:
+        print(f"更新に失敗しました: {exc}", file=sys.stderr)
+        return 1
+
+    print(result.message)
+    if result.backup:
+        print(f"バックアップ     : {result.backup}")
+    if result.installed:
+        print(f"更新したファイル : {result.changed_files} 件")
+        print("監視プロセスを動かしている場合は、再起動すると新しい版になります。")
+        if args.restart and update.restart_watcher():
+            print("監視プロセスの再起動を仕掛けました。")
+    return 0
+
+
 def cmd_printdialog(args: argparse.Namespace) -> int:
     from . import printdialog
 
@@ -325,6 +383,20 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         print("[--] 印刷ダイアログ: orihon 内蔵のもの（プリンタと部数だけ選べます）。"
               "SumatraPDF を入れると Windows 本来の印刷ダイアログが出せます")
 
+    if cfg.update_check:
+        checked = update.check_detailed(
+            config.data_home(), repo=cfg.resolved_update_repo(),
+            interval_hours=cfg.update_interval_hours,
+        )
+        if not checked.ok:
+            print(f"[--] バージョン {__version__} … 更新を確認できませんでした（{checked.error}）")
+        elif checked.release:
+            print(f"[--] 新しいバージョンがあります: {checked.release.summary} → orihon update")
+        else:
+            print(f"[OK] バージョン {__version__}（最新）")
+    else:
+        print(f"[--] バージョン {__version__}（更新の確認は無効）")
+
     for layout in layouts.PRESETS.values():
         try:
             layout.validate()
@@ -394,6 +466,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("config", help="設定を表示・変更する")
     p.add_argument("--set", action="append", metavar="キー=値", help="設定を書き換える")
     p.set_defaults(func=cmd_config)
+
+    p = sub.add_parser("update", help="新しいバージョンを確認して更新する")
+    p.add_argument("--check", action="store_true", help="確認だけして更新はしない")
+    p.add_argument("--dry-run", action="store_true", help="ダウンロードと検査だけ行い、書き換えない")
+    p.add_argument("-y", "--yes", action="store_true", help="確認を求めずに更新する")
+    p.add_argument("--force", action="store_true", help="キャッシュを使わずに問い合わせる")
+    p.add_argument("--no-backup", action="store_true", help="更新前のバックアップを作らない")
+    p.add_argument("--restart", action="store_true", help="更新後に監視プロセスを再起動する")
+    p.set_defaults(func=cmd_update)
 
     p = sub.add_parser("doctor", help="動作環境を点検する")
     p.set_defaults(func=cmd_doctor)

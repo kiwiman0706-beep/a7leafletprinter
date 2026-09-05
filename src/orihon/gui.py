@@ -23,7 +23,7 @@ except ImportError as exc:  # pragma: no cover - tkinter 無し環境
         f"詳細: {exc}"
     ) from None
 
-from . import config, impose, job, layouts, paper, watcher, winprint
+from . import __version__, config, impose, job, layouts, paper, update, watcher, winprint
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class OrihonApp:
         self.watcher: watcher.Watcher | None = None
         self.thread: threading.Thread | None = None
 
-        root.title(f"{config.PRINTER_NAME} - 設定")
+        root.title(f"{config.PRINTER_NAME} - 設定  (v{__version__})")
         root.minsize(720, 560)
 
         self._build_vars()
@@ -87,6 +87,10 @@ class OrihonApp:
         self.v_output_dir = tk.StringVar(value=str(c.resolved_output_dir()))
         self.v_keep_source = tk.BooleanVar(value=c.keep_source)
         self.v_status = tk.StringVar(value="停止中")
+        self.v_update_check = tk.BooleanVar(value=c.update_check)
+        self.v_update_auto = tk.BooleanVar(value=c.update_auto_install)
+        self.v_update_status = tk.StringVar(value="未確認")
+        self.pending_release: update.Release | None = None
 
     @staticmethod
     def _layout_label(name: str) -> str:
@@ -123,6 +127,7 @@ class OrihonApp:
         nb.add(self._tab_layout(nb), text="面付け")
         nb.add(self._tab_output(nb), text="出力")
         nb.add(self._tab_watch(nb), text="監視")
+        nb.add(self._tab_update(nb), text="更新")
 
         bar = ttk.Frame(outer)
         bar.pack(fill="x", pady=(12, 0))
@@ -252,6 +257,90 @@ class OrihonApp:
         )
         return frame
 
+    # -- タブ: 更新 ----------------------------------------------------
+    def _tab_update(self, parent: tk.Misc) -> ttk.Frame:
+        frame = ttk.Frame(parent, padding=12)
+
+        ttk.Label(frame, text=f"いまのバージョン: {__version__}",
+                  font=("", 11, "bold")).pack(anchor="w")
+        ttk.Label(frame, text=f"取得元: https://github.com/{self.cfg.resolved_update_repo()}",
+                  foreground="#666").pack(anchor="w", pady=(2, 12))
+
+        ttk.Checkbutton(frame, text="新しいバージョンが出ていないか確認する",
+                        variable=self.v_update_check).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frame, text="見つけたら自動で更新する（既定は知らせるだけ）",
+                        variable=self.v_update_auto).pack(anchor="w", pady=2)
+
+        bar = ttk.Frame(frame)
+        bar.pack(fill="x", pady=(12, 0))
+        self.btn_check = ttk.Button(bar, text="今すぐ確認", command=self.check_update)
+        self.btn_check.pack(side="left")
+        self.btn_install = ttk.Button(bar, text="更新する", command=self.install_update,
+                                      state="disabled")
+        self.btn_install.pack(side="left", padx=6)
+        ttk.Label(bar, textvariable=self.v_update_status).pack(side="left", padx=12)
+
+        ttk.Label(frame, text="変更点").pack(anchor="w", pady=(16, 4))
+        self.notes = tk.Text(frame, height=12, font=("Consolas", 9),
+                             relief="flat", background="#f7f7f9", wrap="word")
+        self.notes.pack(fill="both", expand=True)
+        self.notes.configure(state="disabled")
+
+        ttk.Label(
+            frame,
+            text=("更新は GitHub のリリースを取得して、src / installer / docs / tools を"
+                  "入れ替えます。設定とログはそのまま残り、入れ替え前の状態は"
+                  "backups フォルダに ZIP で保存されます。"),
+            foreground="#666", wraplength=640, justify="left",
+        ).pack(anchor="w", pady=(12, 0))
+        return frame
+
+    def _set_notes(self, text: str) -> None:
+        self.notes.configure(state="normal")
+        self.notes.delete("1.0", "end")
+        self.notes.insert("1.0", text)
+        self.notes.configure(state="disabled")
+
+    def check_update(self) -> None:
+        self.btn_check.configure(state="disabled")
+        self.v_update_status.set("確認中...")
+
+        def work() -> None:
+            try:
+                checked = update.check_detailed(
+                    config.data_home(),
+                    repo=self.cfg.resolved_update_repo(),
+                    interval_hours=self.cfg.update_interval_hours,
+                    force=True,
+                )
+                self.events.put(("update-checked", checked))
+            except Exception as exc:  # pragma: no cover - スレッド内
+                self.events.put(("update-failed", exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def install_update(self) -> None:
+        release = self.pending_release
+        if release is None:
+            return
+        if not messagebox.askokcancel(
+            "更新",
+            f"{__version__} から {release.version} に更新します。\n"
+            "入れ替え前の状態はバックアップされます。\n\nよろしいですか？",
+        ):
+            return
+        self.btn_install.configure(state="disabled")
+        self.v_update_status.set("更新中...")
+
+        def work() -> None:
+            try:
+                result = update.install(release, config.data_home())
+                self.events.put(("update-installed", result))
+            except Exception as exc:  # pragma: no cover - スレッド内
+                self.events.put(("update-failed", exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
     # ------------------------------------------------------------------
     def _sync_layout_preview(self) -> None:
         layout = layouts.get(self._layout_name())
@@ -293,6 +382,8 @@ class OrihonApp:
         cfg.target_printer = self.v_printer.get().strip()
         cfg.output_dir = self.v_output_dir.get().strip()
         cfg.keep_source = bool(self.v_keep_source.get())
+        cfg.update_check = bool(self.v_update_check.get())
+        cfg.update_auto_install = bool(self.v_update_auto.get())
 
         problems = cfg.validate()
         if problems:
@@ -401,6 +492,46 @@ class OrihonApp:
                     self._log(f"失敗: {Path(path).name}: {exc}")
                 elif kind == "fatal":
                     self._log(f"監視が異常終了しました: {payload}")
+                elif kind == "update-checked":
+                    checked = payload
+                    release = checked.release
+                    self.btn_check.configure(state="normal")
+                    if not checked.ok:
+                        self.v_update_status.set("確認できませんでした")
+                        self._set_notes(checked.describe())
+                        self.pending_release = None
+                        self.btn_install.configure(state="disabled")
+                    elif release is None:
+                        self.v_update_status.set(f"最新版です（{__version__}）")
+                        self._set_notes("新しいバージョンはありません。")
+                        self.pending_release = None
+                        self.btn_install.configure(state="disabled")
+                    else:
+                        self.pending_release = release
+                        self.v_update_status.set(f"新しい版: {release.version}")
+                        self._set_notes(
+                            f"{release.summary}\n{release.html_url}\n\n{release.notes}"
+                        )
+                        self.btn_install.configure(state="normal")
+                        self._log(f"新しいバージョンがあります: {release.summary}")
+                elif kind == "update-installed":
+                    result = payload
+                    self.btn_check.configure(state="normal")
+                    self.btn_install.configure(state="disabled")
+                    self.pending_release = None
+                    self.v_update_status.set(result.message)
+                    self._log(f"{result.message}（バックアップ: {result.backup}）")
+                    messagebox.showinfo(
+                        "更新しました",
+                        f"{result.message}\n\n"
+                        "新しい版で動かすには、この画面と監視プロセスを"
+                        "いったん終了して開き直してください。",
+                    )
+                elif kind == "update-failed":
+                    self.btn_check.configure(state="normal")
+                    self.v_update_status.set("失敗しました")
+                    self._log(f"更新に失敗しました: {payload}")
+                    messagebox.showerror("更新に失敗しました", str(payload))
                 elif kind == "stopped":
                     self.v_status.set("停止中")
                     self.btn_start.configure(state="normal")

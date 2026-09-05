@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
@@ -17,6 +18,8 @@ from typing import Any, Literal
 from . import impose, layouts, paper
 
 logger = logging.getLogger(__name__)
+
+_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 APP_NAME = "OrihonPrinter"
 PRINTER_NAME = "A7 折本プリンター"
@@ -89,6 +92,16 @@ class Config:
     keep_processed_days: int = 3
     log_level: str = "INFO"
 
+    # --- 自動更新 ---
+    #: GitHub のリリースを見て新しい版が出ていないか確認する
+    update_check: bool = True
+    #: 新しい版を見つけたら自動で入れ替える（既定は知らせるだけ）
+    update_auto_install: bool = False
+    #: 取得元の GitHub リポジトリ（空なら同梱の既定値）
+    update_repo: str = ""
+    #: 確認の間隔（時間）
+    update_interval_hours: float = 24.0
+
     _path: Path | None = field(default=None, repr=False, compare=False)
 
     # ------------------------------------------------------------------
@@ -101,6 +114,11 @@ class Config:
             if self.spool_dir
             else data_home() / "spool"
         )
+
+    def resolved_update_repo(self) -> str:
+        from . import UPDATE_REPO
+
+        return self.update_repo.strip() or UPDATE_REPO
 
     def processed_dir(self) -> Path:
         return data_home() / "processed"
@@ -148,6 +166,10 @@ class Config:
             problems.append("safe_margin_mm は 0 以上にしてください")
         if self.poll_interval_sec <= 0:
             problems.append("poll_interval_sec は 0 より大きくしてください")
+        if self.update_interval_hours <= 0:
+            problems.append("update_interval_hours は 0 より大きくしてください")
+        if self.update_repo and not _REPO_RE.match(self.update_repo):
+            problems.append(f"update_repo は owner/repo の形で指定してください: {self.update_repo!r}")
         return problems
 
     # ------------------------------------------------------------------
