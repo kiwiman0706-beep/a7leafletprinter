@@ -18,13 +18,20 @@ sys.path.insert(0, str(ROOT / "src"))
 from orihon import layouts  # noqa: E402
 from orihon.layouts import Layout  # noqa: E402
 
-CELL_W = 96
-CELL_H = 136
+# パネルの縦横は、仕上がりの向き（turn）に合わせて入れ替える
+CELL_PORTRAIT = (96, 136)
+CELL_LANDSCAPE = (136, 96)
 PAD = 28
+_ROT_JA = {0: "そのまま", 90: "反時計90度", 180: "天地逆", 270: "時計90度"}
 FONT = "'Hiragino Sans','Yu Gothic', 'Noto Sans JP', sans-serif"
 
 
+def _cell_size(layout: Layout) -> tuple[int, int]:
+    return CELL_LANDSCAPE if layout.turn == 90 else CELL_PORTRAIT
+
+
 def _edge_line(layout: Layout, edge, style: str) -> str:
+    CELL_W, CELL_H = _cell_size(layout)
     if edge.orientation == "v":
         x = PAD + (edge.col + 1) * CELL_W
         y1 = PAD + edge.row * CELL_H
@@ -38,6 +45,7 @@ def _edge_line(layout: Layout, edge, style: str) -> str:
 
 
 def render(layout: Layout) -> str:
+    CELL_W, CELL_H = _cell_size(layout)
     width = PAD * 2 + layout.cols * CELL_W
     height = PAD * 2 + layout.rows * CELL_H + 46
 
@@ -60,14 +68,14 @@ def render(layout: Layout) -> str:
     for row, col, page_no, rotation in layout.cells():
         cx = PAD + col * CELL_W + CELL_W / 2
         cy = PAD + row * CELL_H + CELL_H / 2
-        transform = f' transform="rotate(180 {cx} {cy})"' if rotation % 360 else ""
+        transform = f' transform="rotate({-rotation % 360} {cx} {cy})"' if rotation % 360 else ""
         parts.append(
             f'<g{transform}>'
             f'<circle cx="{cx}" cy="{cy}" r="21" fill="none" stroke="#222" stroke-width="1.5"/>'
             f'<text x="{cx}" y="{cy + 8}" text-anchor="middle" font-size="24" '
             f'font-family="{FONT}" fill="#222">{page_no}</text>'
             f'<text x="{cx}" y="{cy + 40}" text-anchor="middle" font-size="11" '
-            f'font-family="{FONT}" fill="#98a">{"天地逆" if rotation % 360 else "そのまま"}</text>'
+            f'font-family="{FONT}" fill="#98a">{_ROT_JA[rotation % 360]}</text>'
             f"</g>"
         )
 
@@ -89,7 +97,7 @@ def main() -> int:
     out_dir = ROOT / "docs" / "images"
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
-    for name in ("orihon8", "orihon8-right", "orihon4", "nup8"):
+    for name in ("orihon8", "orihon8-right", "orihon8-landscape", "orihon4", "nup8"):
         layout = layouts.get(name)
         path = out_dir / f"layout-{name}.svg"
         path.write_text(render(layout) + "\n", encoding="utf-8")

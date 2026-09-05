@@ -62,6 +62,10 @@ class Config:
     fit: impose.Fit = "contain"
     fill: impose.FillMode = "blank"
     max_sheets: int = 0
+    #: 原稿とパネルの縦横が食い違うとき、パネル内で 90 度回して余白を減らす
+    auto_rotate: bool = True
+    #: 原稿の周囲にある単色の帯（用紙に合わせて印刷したときの余白）を切り落とす
+    trim: bool = False
     debug_numbers: bool = False
 
     # --- 出力 ---
@@ -114,6 +118,8 @@ class Config:
             fit=self.fit,
             fill=self.fill,
             max_sheets=self.max_sheets,
+            auto_rotate=self.auto_rotate,
+            trim=self.trim,
             debug_numbers=self.debug_numbers,
         )
 

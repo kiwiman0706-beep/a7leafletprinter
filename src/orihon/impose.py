@@ -45,6 +45,11 @@ class ImposeOptions:
     fill: FillMode = "blank"
     #: 出力する用紙の最大枚数（0 で無制限）
     max_sheets: int = 0
+    #: 原稿とパネルの縦横が食い違うとき、パネル内で 90 度回して余白を減らす
+    auto_rotate: bool = True
+    #: 原稿の上下左右にある「単色の帯」を切り落としてから配置する
+    #: （PowerPoint を用紙に合わせて印刷したときの余白対策）
+    trim: bool = False
     #: パネルの隅にページ番号を薄く入れる（確認用）
     debug_numbers: bool = False
     fold_color: tuple[float, float, float] = FOLD_COLOR
@@ -71,6 +76,12 @@ class ImposeResult:
     layout: str
     paper: str
     landscape: bool
+    #: 原稿がパネル面積のどれだけを埋めたか（0.0〜1.0 の平均）
+    coverage: float = 0.0
+    #: パネル内で 90 度回したページ数
+    rotated_pages: int = 0
+    #: 周囲の単色の帯を切り落としたページ数
+    trimmed_pages: int = 0
     truncated: bool = False
     warnings: list[str] = field(default_factory=list)
 
@@ -81,6 +92,8 @@ class ImposeResult:
             f"用紙       : {self.paper} {o}",
             f"元ページ数 : {self.source_pages}",
             f"配置ページ : {self.placed_pages}",
+            f"用紙の使用率: {self.coverage * 100:.0f}%"
+            + (f"（うち {self.rotated_pages} ページを90度回転）" if self.rotated_pages else ""),
             f"出力枚数   : {self.sheets}",
             f"出力先     : {self.output}",
         ]
@@ -88,16 +101,124 @@ class ImposeResult:
         return "\n".join(lines)
 
 
-def _choose_landscape(layout: Layout, sheet: paper.Paper, src_aspect: float) -> bool:
-    """パネルの縦横比が元原稿にいちばん近くなる用紙の向きを選ぶ。"""
+def _choose_landscape(
+    layout: Layout, sheet: paper.Paper, src_aspect: float, auto_rotate: bool = True
+) -> bool:
+    """パネルの縦横比が元原稿にいちばん近くなる用紙の向きを選ぶ。
+
+    パネル内で 90 度回すことを許す場合は、原稿を寝かせた縦横比も候補に入れる。
+    """
+    candidates = [src_aspect] + ([1.0 / src_aspect] if auto_rotate and src_aspect else [])
     best, best_score = False, None
     for landscape in (False, True):
         w, h = sheet.size_pt(landscape)
         panel_aspect = (w / layout.cols) / (h / layout.rows)
-        score = abs(log(panel_aspect) - log(src_aspect))
+        score = min(abs(log(panel_aspect) - log(a)) for a in candidates)
         if best_score is None or score < best_score - 1e-9:
             best, best_score = landscape, score
     return best
+
+
+@dataclass(frozen=True)
+class Bands:
+    """ページの上下左右にある「全幅／全高が単色」の帯の割合（0.0〜1.0）。"""
+
+    top: float = 0.0
+    bottom: float = 0.0
+    left: float = 0.0
+    right: float = 0.0
+
+    @property
+    def remaining(self) -> float:
+        """帯を除いたあとに残る面積の割合。"""
+        return max(0.0, 1.0 - self.top - self.bottom) * max(0.0, 1.0 - self.left - self.right)
+
+    @property
+    def significant(self) -> bool:
+        return self.remaining < 0.85
+
+    def clip(self, rect: pymupdf.Rect) -> pymupdf.Rect:
+        return pymupdf.Rect(
+            rect.x0 + rect.width * self.left,
+            rect.y0 + rect.height * self.top,
+            rect.x1 - rect.width * self.right,
+            rect.y1 - rect.height * self.bottom,
+        )
+
+
+def detect_uniform_bands(
+    page: pymupdf.Page, dpi: int = 48, max_band: float = 0.45
+) -> Bands:
+    """ページの縁にある単色の帯を測る。
+
+    PowerPoint のスライドを用紙に合わせて印刷すると、上下（または左右）に
+    大きな白帯が付く。この帯は「全幅にわたって色が一様な行」が続く範囲として
+    見つけられる。1 辺あたり ``max_band`` までしか削らないので、
+    ほとんど白紙のページでも中身が消えてしまうことはない。
+    """
+    try:
+        pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
+    except Exception as exc:  # pragma: no cover - 壊れたページなど
+        logger.debug("帯の検出に失敗しました: %s", exc)
+        return Bands()
+    width, height, stride = pix.width, pix.height, pix.stride
+    if width < 4 or height < 4:
+        return Bands()
+    buf = pix.samples
+
+    def row_uniform(y: int) -> bool:
+        start = y * stride
+        line = buf[start : start + width]
+        return line.count(line[0]) == width
+
+    def col_uniform(x: int) -> bool:
+        first = buf[x]
+        return all(buf[y * stride + x] == first for y in range(height))
+
+    def count(is_uniform, total: int, reverse: bool) -> int:
+        limit = int(total * max_band)
+        k = 0
+        while k < limit and is_uniform(total - 1 - k if reverse else k):
+            k += 1
+        return k
+
+    top = count(row_uniform, height, False)
+    bottom = count(row_uniform, height, True)
+    left = count(col_uniform, width, False)
+    right = count(col_uniform, width, True)
+    return Bands(top / height, bottom / height, left / width, right / width)
+
+
+def _fit_coverage(panel_w: float, panel_h: float, src_w: float, src_h: float) -> float:
+    """縦横比を保って収めたとき、原稿がパネル面積の何割を埋めるか。"""
+    if min(panel_w, panel_h, src_w, src_h) <= 0:
+        return 0.0
+    scale = min(panel_w / src_w, panel_h / src_h)
+    return (src_w * scale) * (src_h * scale) / (panel_w * panel_h)
+
+
+def _rotated_size(width: float, height: float, rotation: int) -> tuple[float, float]:
+    return (height, width) if rotation % 180 else (width, height)
+
+
+def _best_rotation(
+    panel_w: float, panel_h: float, src_w: float, src_h: float, base: int, auto: bool
+) -> tuple[int, float, bool]:
+    """パネルに対していちばん無駄の少ない回転角を選ぶ。
+
+    ``(回転角, 占有率, 90度回したか)`` を返す。差がごくわずかなときは
+    回さない（ほぼ正方形の原稿がページごとにバラバラの向きになるのを防ぐ）。
+    """
+    bw, bh = _rotated_size(src_w, src_h, base)
+    base_cov = _fit_coverage(panel_w, panel_h, bw, bh)
+    if not auto:
+        return base % 360, base_cov, False
+    turned = (base + 90) % 360
+    tw, th = _rotated_size(src_w, src_h, turned)
+    turned_cov = _fit_coverage(panel_w, panel_h, tw, th)
+    if turned_cov > base_cov * 1.02:
+        return turned, turned_cov, True
+    return base % 360, base_cov, False
 
 
 def _panel_rect(
@@ -231,7 +352,7 @@ def impose_document(
     src_aspect = (src_rect.width / src_rect.height) if src_rect.height else 1.0
 
     if opts.orientation == "auto":
-        landscape = _choose_landscape(layout, sheet, src_aspect)
+        landscape = _choose_landscape(layout, sheet, src_aspect, opts.auto_rotate)
     else:
         landscape = opts.orientation == "landscape"
 
@@ -242,7 +363,16 @@ def impose_document(
     out = pymupdf.open()
     margin = mm(max(0.0, opts.safe_margin_mm))
     placed = 0
+    rotated = 0
+    trimmed = 0
+    coverage_sum = 0.0
     warnings: list[str] = []
+    band_cache: dict[int, Bands] = {}
+
+    def bands_for(index: int) -> Bands:
+        if index not in band_cache:
+            band_cache[index] = detect_uniform_bands(src.load_page(index))
+        return band_cache[index]
 
     for s in range(sheets):
         page = out.new_page(width=sheet_w, height=sheet_h)
@@ -261,14 +391,30 @@ def impose_document(
                     f"パネル（{paper.pt_to_mm(rect.width):.1f}×"
                     f"{paper.pt_to_mm(rect.height):.1f}mm）に収まりません"
                 )
+            src_page_rect = src.load_page(slot).rect
+            clip = None
+            if opts.trim:
+                bands = bands_for(slot)
+                if bands.significant:
+                    clip = bands.clip(src_page_rect)
+                    src_page_rect = clip
+                    trimmed += 1
+            angle, coverage, turned = _best_rotation(
+                target.width, target.height,
+                src_page_rect.width, src_page_rect.height,
+                rotation, opts.auto_rotate,
+            )
             page.show_pdf_page(
                 target,
                 src,
                 slot,
-                rotate=rotation % 360,
+                rotate=angle,
                 keep_proportion=(opts.fit == "contain"),
+                clip=clip,
             )
             placed += 1
+            rotated += int(turned)
+            coverage_sum += coverage if opts.fit == "contain" else 1.0
             if opts.debug_numbers:
                 page.insert_text(
                     pymupdf.Point(rect.x0 + mm(2), rect.y0 + mm(4)),
@@ -278,6 +424,38 @@ def impose_document(
                     color=(0.85, 0.2, 0.2),
                 )
         _draw_guides(page, layout, opts, sheet_w, sheet_h)
+
+    coverage = coverage_sum / placed if placed else 0.0
+
+    if trimmed:
+        warnings.append(f"{trimmed} ページの周囲にあった単色の帯を切り落としました")
+    elif not opts.trim:
+        # 「用紙に合わせて印刷」でできた白帯は、面積だけ見ると気づけない
+        first_bands = bands_for(0)
+        if first_bands.significant:
+            warnings.append(
+                f"原稿の周囲に大きな余白（実質 {first_bands.remaining * 100:.0f}%）があります。"
+                "アプリ側で用紙に合わせて印刷されたのかもしれません。"
+                " --trim を付けると切り落とせます"
+            )
+
+    if rotated:
+        warnings.append(
+            f"原稿が横長（またはパネルと向きちがい）だったため、{rotated} ページを"
+            "パネル内で 90 度回して配置しました（読むときは冊子を回してください）"
+        )
+        if layout.sibling:
+            sibling = layouts.get(layout.sibling)
+            warnings.append(
+                f"回さずに読みたい場合は --layout {sibling.name} をお試しください"
+                f"（{sibling.title}）"
+            )
+    elif coverage and coverage < 0.55 and layout.sibling:
+        sibling = layouts.get(layout.sibling)
+        warnings.append(
+            f"用紙の使用率が {coverage * 100:.0f}% と低めです。"
+            f"--layout {sibling.name}（{sibling.title}）のほうが無駄が少ないかもしれません"
+        )
 
     if truncated:
         warnings.append(
@@ -298,6 +476,9 @@ def impose_document(
         layout=layout.name,
         paper=sheet.name,
         landscape=landscape,
+        coverage=coverage,
+        rotated_pages=rotated,
+        trimmed_pages=trimmed,
         truncated=truncated,
         warnings=warnings,
     )

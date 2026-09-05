@@ -18,14 +18,19 @@ cut    : 切り込み（隣り合う panel の境界のうち、折り線にな�
 * 左右に隣接する panel 同士は回転角が同じ（縦の折り線でそのまま折れる）
 * 上下に隣接する panel 同士は回転角が 180 度ちがう（横の折り線で裏返る）
 
-という制約を満たす。``validate()`` はこれを機械的に検査し、
+という制約を満たす。ただしこの 2 つは「仕上がった本を立てて持ち、
+背を左右どちらかに置いて読む」ことを前提にしている。用紙ごと 90 度倒して
+「背を上下に置き、ページを上にめくる本（天綴じ）」にすると、縦横の役割が
+そっくり入れ替わる。``turn`` はこれを表し、``rotate90()`` があるレイアウトから
+倒したレイアウトを機械的に作る。スライドのような横長原稿は、この倒した
+レイアウトを使うと回転させずにそのまま入る。``validate()`` はこれを機械的に検査し、
 ``fold_edges()`` / ``cut_edges()`` はレイアウトから折り線・切り込み位置を
 自動的に導出する。図6 の中央のひし形（切り込み）も、この導出結果と一致する。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Iterator, Literal, Sequence
 
 Kind = Literal["foldbook", "accordion", "grid"]
@@ -73,7 +78,11 @@ class Layout:
     pages: tuple[tuple[int, ...], ...]
     rotations: tuple[tuple[int, ...], ...]
     kind: Kind = "foldbook"
-    binding: Literal["left", "right", "none"] = "left"
+    binding: Literal["left", "right", "top", "bottom", "none"] = "left"
+    #: 仕上がりの本を立てて読む(0) か、横に倒して上にめくる(90) か
+    turn: Literal[0, 90] = 0
+    #: 用紙ごと 90 度倒した対になるレイアウト名（あれば）
+    sibling: str = ""
     description: str = ""
     source: str = ""
     aliases: tuple[str, ...] = field(default_factory=tuple)
@@ -181,6 +190,8 @@ class Layout:
             for rot in row:
                 if rot not in (0, 90, 180, 270):
                     raise LayoutError(f"{self.name}: 回転角は 0/90/180/270 のみ (実際: {rot})")
+        if self.turn not in (0, 90):
+            raise LayoutError(f"{self.name}: turn は 0 か 90 のみ (実際: {self.turn})")
 
         if self.kind == "accordion":
             expected = 1
@@ -214,15 +225,17 @@ class Layout:
             )
 
         # 回転角の整合性
+        #   turn=0  … 縦の折り線=同じ向き / 横の折り線=180度ちがい
+        #   turn=90 … 用紙ごと倒すので、縦横の役割が入れ替わる
         for edge in self.fold_edges():
             (r1, c1), (r2, c2) = edge.cells
             diff = (self.rotations[r2][c2] - self.rotations[r1][c1]) % 360
-            expected = 0 if edge.orientation == "v" else 180
+            expected = 0 if (edge.orientation == "v") ^ (self.turn == 90) else 180
             if diff != expected:
                 raise LayoutError(
                     f"{self.name}: {'縦' if edge.orientation == 'v' else '横'}の折り線 "
                     f"({r1},{c1})-({r2},{c2}) の回転差が {diff} 度です"
-                    f"（{expected} 度である必要があります）"
+                    f"（turn={self.turn} では {expected} 度である必要があります）"
                 )
 
     # ------------------------------------------------------------------
@@ -238,9 +251,12 @@ class Layout:
         for r in range(self.rows):
             cell_texts = []
             for c in range(self.cols):
-                mark = "^" if self.rotations[r][c] % 360 == 0 else "v"
+                mark = {0: "^", 90: "<", 180: "v", 270: ">"}[self.rotations[r][c] % 360]
                 cell_texts.append(f"{self.pages[r][c]:>2}{mark} ".center(width))
-            row_line = "|" + "|".join(cell_texts) + "|"
+            seps = ["#" if Edge(r, c, "v") in cuts else "|" for c in range(self.cols - 1)]
+            row_line = "|"
+            for c, text in enumerate(cell_texts):
+                row_line += text + (seps[c] if c < len(seps) else "|")
             lines.append(row_line)
             if r < self.rows - 1:
                 seps = []
@@ -249,7 +265,10 @@ class Layout:
                     seps.append(("=" if is_cut else "-") * width)
                 lines.append("+" + "+".join(seps) + "+")
         lines.append(top)
-        legend = "  ^ = そのまま / v = 180度回転 / === = 切り込み(ハサミ) / --- = 折り線"
+        legend = (
+            "  ^ = そのまま / v = 180度 / < = 反時計90度 / > = 時計90度\n"
+            "  === / # = 切り込み(ハサミ) / --- / | = 折り線"
+        )
         return "\n".join(lines) + "\n" + legend
 
 
@@ -259,6 +278,65 @@ def _auto_rotations(pages: Sequence[Sequence[int]]) -> tuple[tuple[int, ...], ..
     return tuple(
         tuple(180 if (rows - 1 - r) % 2 else 0 for _ in row) for r, row in enumerate(pages)
     )
+
+
+_TURNED_BINDING: dict[str, str] = {
+    "left": "top", "right": "bottom", "top": "right", "bottom": "left", "none": "none",
+}
+
+
+def rotate90(
+    layout: Layout,
+    name: str,
+    title: str,
+    *,
+    aliases: Sequence[str] = (),
+    description: str = "",
+) -> Layout:
+    """用紙ごと時計回りに 90 度倒したレイアウトを作る。
+
+    紙そのものは同じで、持つ向きが変わるだけなので、折り方も切り込みの位置も
+    そっくりそのまま 90 度回る。縦長だったパネルは横長になるので、
+    スライドのような横長原稿がそのまま入るようになる。
+
+    回転後は「表紙(ページ1)が回転 0 度」になるように全体をそろえる。
+    全パネルに同じ角度を足しても隣同士の差は変わらないので、
+    折本としての成立性には影響しない。
+    """
+    if layout.kind != "foldbook":
+        raise LayoutError(f"rotate90 は折本レイアウトにだけ使えます（{layout.name} は {layout.kind}）")
+
+    rows, cols = layout.rows, layout.cols
+    pages = [[0] * rows for _ in range(cols)]
+    rotations = [[0] * rows for _ in range(cols)]
+    for r in range(rows):
+        for c in range(cols):
+            pages[c][rows - 1 - r] = layout.pages[r][c]
+            rotations[c][rows - 1 - r] = (layout.rotations[r][c] + 270) % 360
+
+    # 表紙が 0 度になるよう全体をそろえる
+    offset = next(
+        rotations[r][c]
+        for r in range(cols)
+        for c in range(rows)
+        if pages[r][c] == 1
+    )
+    rotations = [[(rot - offset) % 360 for rot in row] for row in rotations]
+
+    turned = Layout(
+        name=name,
+        title=title,
+        pages=tuple(tuple(row) for row in pages),
+        rotations=tuple(tuple(row) for row in rotations),
+        kind=layout.kind,
+        binding=_TURNED_BINDING[layout.binding],  # type: ignore[arg-type]
+        turn=90 if layout.turn == 0 else 0,
+        sibling=layout.name,
+        description=description,
+        aliases=tuple(aliases),
+    )
+    turned.validate()
+    return turned
 
 
 def _mirror(pages: Sequence[Sequence[int]]) -> tuple[tuple[int, ...], ...]:
@@ -387,6 +465,49 @@ ACCORDION4 = _make(
     description="A4 を縦に 4 分割した帯を、そのまま蛇腹に折る。",
 )
 
+# 用紙ごと 90 度倒した「横長パネル」版。
+# パワーポイントのスライドのような横長原稿を、回転させずにそのまま入れられる。
+#
+#     ┌───┬───┐
+#     │ 8 │ 7 │  ← 右列は 180 度回転
+#     ├───┼───┤
+#     │ 1 ┃ 6 │  ← 中央 2 マス分の "縦線" が切り込み
+#     ├───┼───┤
+#     │ 2 ┃ 5 │
+#     ├───┼───┤
+#     │ 3 │ 4 │
+#     └───┴───┘
+ORIHON8_LANDSCAPE = rotate90(
+    ORIHON8,
+    "orihon8-landscape",
+    "折本 8ページ（A4縦→A7横・天綴じ）",
+    aliases=("a7-yoko", "slide", "slide8", "8p-landscape"),
+    description=(
+        "orihon8 を用紙ごと 90 度倒したもの。パネルが横長（105×74mm）になるので、"
+        "パワーポイントのスライドや A4 横の原稿がほとんど余白なく収まる。"
+        "仕上がりは上にめくる天綴じ。折り方・切り込みは orihon8 と同じで、向きが 90 度回るだけ。"
+    ),
+)
+
+ORIHON8_LANDSCAPE_RIGHT = rotate90(
+    ORIHON8_RIGHT,
+    "orihon8-landscape-bottom",
+    "折本 8ページ（A4縦→A7横・地綴じ）",
+    aliases=("a7-yoko-rev", "slide8-rev"),
+    description="orihon8-landscape を上下逆にめくる版（下に向かってめくる）。",
+)
+
+ORIHON4_LANDSCAPE = rotate90(
+    ORIHON4,
+    "orihon4-landscape",
+    "折本 4ページ（A4横→A6横・天綴じ）",
+    aliases=("a6-yoko", "slide4", "4p-landscape"),
+    description=(
+        "orihon4 を用紙ごと 90 度倒したもの。パネルは 148×105mm の横長。切り込み不要。"
+    ),
+)
+
+
 # 折らずに「切り離すだけ」の N-up（A7 チラシを 8 面付けする等）
 NUP8 = _make(
     "nup8",
@@ -432,6 +553,9 @@ for _layout in (
     ORIHON8_RIGHT,
     ORIHON4,
     ORIHON4_RIGHT,
+    ORIHON8_LANDSCAPE,
+    ORIHON8_LANDSCAPE_RIGHT,
+    ORIHON4_LANDSCAPE,
     ACCORDION8,
     ACCORDION4,
     NUP8,
@@ -439,6 +563,13 @@ for _layout in (
     NUP2,
 ):
     PRESETS[_layout.name] = _layout
+
+# sibling（90度倒した対）を双方向にたどれるようにする
+for _turned in list(PRESETS.values()):
+    if _turned.sibling and _turned.sibling in PRESETS:
+        _base = PRESETS[_turned.sibling]
+        if not _base.sibling:
+            PRESETS[_base.name] = replace(_base, sibling=_turned.name)
 
 _ALIASES: dict[str, str] = {}
 for _layout in PRESETS.values():

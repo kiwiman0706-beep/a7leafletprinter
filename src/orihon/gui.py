@@ -79,6 +79,8 @@ class OrihonApp:
         self.v_guides = tk.StringVar(value=_label_for(GUIDE_CHOICES, c.guides))
         self.v_fit = tk.StringVar(value=_label_for(FIT_CHOICES, c.fit))
         self.v_fill = tk.StringVar(value=_label_for(FILL_CHOICES, c.fill))
+        self.v_auto_rotate = tk.BooleanVar(value=c.auto_rotate)
+        self.v_trim = tk.BooleanVar(value=c.trim)
         self.v_numbers = tk.BooleanVar(value=c.debug_numbers)
         self.v_output_mode = tk.StringVar(value=_label_for(OUTPUT_CHOICES, c.output_mode))
         self.v_printer = tk.StringVar(value=c.target_printer)
@@ -164,8 +166,16 @@ class OrihonApp:
         ttk.Label(grid, text="ページが足りないとき").grid(row=6, column=0, sticky="w", pady=4)
         _combo(grid, FILL_CHOICES, self.v_fill).grid(row=6, column=1, sticky="w", pady=4)
 
+        ttk.Checkbutton(
+            grid, text="横長の原稿はパネル内で90度回して余白を減らす",
+            variable=self.v_auto_rotate,
+        ).grid(row=7, column=1, sticky="w", pady=4)
+        ttk.Checkbutton(
+            grid, text="原稿の周りの余白（単色の帯）を切り落とす",
+            variable=self.v_trim,
+        ).grid(row=8, column=1, sticky="w", pady=4)
         ttk.Checkbutton(grid, text="確認用にページ番号を入れる",
-                        variable=self.v_numbers).grid(row=7, column=1, sticky="w", pady=4)
+                        variable=self.v_numbers).grid(row=9, column=1, sticky="w", pady=4)
 
         ttk.Separator(frame).pack(fill="x", pady=10)
         ttk.Label(frame, text="面付け図（^ = そのまま / v = 180度回転 / === = 切り込み）").pack(anchor="w")
@@ -276,6 +286,8 @@ class OrihonApp:
         cfg.guides = _value_for(GUIDE_CHOICES, self.v_guides.get())  # type: ignore[assignment]
         cfg.fit = _value_for(FIT_CHOICES, self.v_fit.get())  # type: ignore[assignment]
         cfg.fill = _value_for(FILL_CHOICES, self.v_fill.get())  # type: ignore[assignment]
+        cfg.auto_rotate = bool(self.v_auto_rotate.get())
+        cfg.trim = bool(self.v_trim.get())
         cfg.debug_numbers = bool(self.v_numbers.get())
         cfg.output_mode = _value_for(OUTPUT_CHOICES, self.v_output_mode.get())  # type: ignore[assignment]
         cfg.target_printer = self.v_printer.get().strip()

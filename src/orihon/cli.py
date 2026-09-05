@@ -38,6 +38,14 @@ def _add_impose_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--max-sheets", type=int, metavar="N", help="出力する用紙の最大枚数")
     parser.add_argument(
+        "--no-auto-rotate", action="store_true",
+        help="原稿とパネルの向きが食い違っても、パネル内で90度回さない",
+    )
+    parser.add_argument(
+        "--trim", action="store_true",
+        help="原稿の周囲にある単色の帯を切り落とす（用紙に合わせて印刷された原稿むけ）",
+    )
+    parser.add_argument(
         "--numbers", action="store_true", help="確認用にパネル隅へページ番号を入れる"
     )
 
@@ -60,6 +68,10 @@ def _merge_impose_options(cfg: config.Config, args: argparse.Namespace) -> impos
         opts.fill = args.fill
     if args.max_sheets is not None:
         opts.max_sheets = args.max_sheets
+    if args.no_auto_rotate:
+        opts.auto_rotate = False
+    if args.trim:
+        opts.trim = True
     if args.numbers:
         opts.debug_numbers = True
     return opts
@@ -111,7 +123,13 @@ def cmd_gui(_args: argparse.Namespace) -> int:
     return gui.main()
 
 
-BINDING_JA = {"left": "左綴じ（横書き向き）", "right": "右綴じ（縦書き向き）", "none": "－"}
+BINDING_JA = {
+    "left": "左綴じ（横書き向き）",
+    "right": "右綴じ（縦書き向き）",
+    "top": "天綴じ（上にめくる・横長原稿向き）",
+    "bottom": "地綴じ（下にめくる・横長原稿向き）",
+    "none": "－",
+}
 
 
 def cmd_layouts(args: argparse.Namespace) -> int:
@@ -120,7 +138,7 @@ def cmd_layouts(args: argparse.Namespace) -> int:
         if layout.aliases:
             print(f"  別名     : {', '.join(layout.aliases)}")
         print(f"  ページ数 : {layout.page_count} ({layout.cols}列 x {layout.rows}段)")
-        print(f"  綴じ     : {BINDING_JA[layout.binding]}")
+        print(f"  綴じ     : {BINDING_JA.get(layout.binding, layout.binding)}")
         if layout.description:
             print(f"  説明     : {layout.description}")
         if layout.source:
