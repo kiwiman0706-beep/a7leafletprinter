@@ -355,6 +355,10 @@ orihon config --set layout=orihon8-right --set output_mode=print
 # PDF を指定してプリンタ選択ダイアログだけ開く（内蔵ダイアログの単体起動）
 orihon printdialog 折本.pdf
 
+# スキャンした折本を元のページ順に戻す
+orihon unimpose スキャン.pdf
+orihon unimpose スキャン.pdf --preview
+
 # バージョンアップ
 orihon update --check
 orihon update
@@ -406,6 +410,71 @@ PDF を無人で印刷する標準 API が Windows に無いため、使える�
 > **「実際のサイズ」「100%」「拡大縮小なし」** で印刷してください。
 > 「用紙に合わせる」だと少しだけ縮小されて、折り目と紙の端が合わなくなります。
 > 内蔵ダイアログにはこの注意書きを常に出しています。
+
+---
+
+## スキャンして元のページに戻す
+
+刷って折った折本、あるいは**白紙の A4 を折って手書きしたメモ**を
+スキャンすると、元のページ順の PDF に戻せます。面付けの逆変換です。
+
+```bash
+orihon unimpose スキャン.pdf                    # 元原稿.pdf ができる
+orihon unimpose スキャン.jpg --preview          # 切り分け位置を図示して確認
+```
+
+設定画面の「スキャンから戻す...」ボタンからも同じことができます。
+
+### トンボや罫線は要りません
+
+必要なのは**紙の範囲が分かること**だけで、目印は要りません。
+ScanSnap のような書類スキャナは紙の端を機械的に見つけて用紙ちょうどに
+切ってくれるので、その紙をレイアウトどおりの格子に割れば復元できます。
+
+紙の位置の決め方は 3 通りあります。
+
+| `--crop` | 動き | 向いている場面 |
+|---|---|---|
+| `auto`（既定） | 取り込み結果が既に用紙ちょうどなら、そのまま使う。そうでなければインクの範囲から探す | ふだんはこれ |
+| `never` | 紙面全体をそのまま使う | 書き込みが少ない手書きメモで、確実にしたいとき |
+| `always` | 必ずインクの範囲から探す | フラットベッドで大きな余白がついたとき |
+
+**既定は「迷ったら切らない」**にしてあります。手書きメモはインクが紙の
+一部にしかないので、探しにいくと文字のある範囲を紙と取り違えて、
+全部ずれてしまうためです。
+
+フラットベッドなど余白付きで取り込んだ場合は、インクの範囲を見つけてから
+用紙の縦横比に合わせて広げます（模擬スキャンで 0.1mm 以内まで復元できています）。
+
+### 向きが合わないとき
+
+```bash
+orihon unimpose スキャン.pdf --sheet-rotate 180   # 上下逆だった
+orihon unimpose スキャン.pdf --sheet-rotate 90    # 横倒しで取り込んだ
+orihon unimpose スキャン.pdf --page-rotate 90     # 全ページを寝かせたい
+```
+
+紙の向きはパネルの形から自動で判定しますが、**上下逆と、正方形の格子
+（`orihon4` の 2列2段）は原理的に判断できません**。`--preview` で
+確かめてから指定してください。
+
+### Google ドライブで自動処理する（GAS 版）
+
+ScanSnap の保存先を Google ドライブにしておけば、**パソコンを開いていなくても**
+クラウド側で勝手に復元させられます。
+
+```
+ScanSnap ──▶ ドライブの入力フォルダ ──▶ 10分おきに GAS が処理 ──▶ 元のページ順の PDF
+```
+
+導入手順は [gas/README.md](gas/README.md) にあります。
+Apps Script には PDF を扱う手段がないため、**Google スライドをレンダラとして**
+使っています（画像を切り抜き・回転して並べ、PDF に書き出す）。
+そのため ScanSnap の保存形式は **JPEG** にしてください。
+
+レイアウト表（`gas/Layouts.gs`）は Python 版から自動生成していて、
+Node で GAS のコードを実際に走らせて Python 版と一致することを
+テストで確かめています。
 
 ---
 
@@ -472,6 +541,8 @@ orihon config --set update_auto_install=true
 | ダイアログを出さずに刷りたい | `orihon config --set output_mode=print --set target_printer="プリンタ名"` |
 | 更新に失敗した | `C:\ProgramData\OrihonPrinter\backups\` の ZIP を展開して戻せます |
 | 更新の確認を止めたい | `orihon config --set update_check=false` |
+| 戻したページの順番がおかしい | `orihon unimpose <ファイル> --preview` で切り分けを確認し、`--sheet-rotate` / `--layout` を調整 |
+| 手書きメモがずれて切られる | `--crop never`（紙面全体を使う）を試してください |
 | ログを見たい | `C:\ProgramData\OrihonPrinter\logs\orihon.log` |
 
 ---
@@ -480,9 +551,10 @@ orihon config --set update_auto_install=true
 
 ```bash
 pip install -e ".[dev]"
-pytest                          # 162 件のテスト
+pytest                          # 198 件のテスト
 python tools/make_diagrams.py   # docs/images/*.svg を再生成
 python tools/make_icon.py       # アイコンを再生成
+python tools/make_gas_layouts.py  # GAS 版のレイアウト定義を再生成
 
 # setup.exe を組み立てる（Windows + Inno Setup 6 が必要）
 iscc /DAppVersion=0.2.0 installer\setup\orihon.iss
@@ -504,12 +576,14 @@ src/orihon/
   winprint.py  Windows のプリンタ一覧・PDF 送出・印刷ダイアログの起動
   printdialog.py 内蔵のプリンタ選択ダイアログ（tkinter）
   gui.py       設定画面（tkinter）
+  unimpose.py  面付けの逆変換（スキャンから元のページ順に戻す）
   update.py    GitHub リリースからの自動更新
   cli.py       コマンドライン
 installer/     仮想プリンタのインストーラ（PowerShell）
   bootstrap.ps1  リリースを取ってきて入れる 1 行インストーラ
   setup/         setup.exe を組み立てる Inno Setup スクリプトとアイコン
 .github/workflows/  CI（テスト）とリリース（タグを打つと自動で公開）
+gas/           Google ドライブで自動復元する Apps Script 版
 docs/          面付けの解説と図
 ```
 

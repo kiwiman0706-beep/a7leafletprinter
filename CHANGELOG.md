@@ -5,6 +5,38 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-06
+
+### 追加
+
+- **スキャンした折本を元のページ順に戻す機能**（面付けの逆変換）
+  - `orihon unimpose`、設定画面の「スキャンから戻す...」ボタン
+  - 往復（面付け→逆面付け）で 7 レイアウトすべてがページ順・正立とも
+    完全に復元されることをテストで確認している
+  - **トンボや罫線は不要。** 白紙の A4 を折って手書きしたメモでも戻せる
+  - 紙の位置の決め方を 3 通り用意（`--crop auto/never/always`）。
+    ScanSnap のように用紙ちょうどで取り込まれたものはそのまま使い、
+    フラットベッドの余白付きならインクの範囲から探して縦横比で補正する。
+    既定は「迷ったら切らない」（手書きメモで文字の範囲を紙と
+    取り違えないため）
+  - 切り分け位置とページ番号をスキャンに重ねた確認用 PDF（`--preview`）
+  - PDF だけでなく JPEG／PNG も入力にできる
+  - 紙の向きはパネルの形から自動判定（上下逆と正方形の格子は
+    原理的に判断できないため `--sheet-rotate` で指定する）
+- **Google Apps Script 版**（`gas/`）
+  - ScanSnap の保存先を Google ドライブにしておけば、パソコンを
+    開いていなくてもクラウド側で自動的に復元される
+  - Apps Script には PDF を扱う手段がないため、Google スライドを
+    レンダラとして使っている（切り抜き・回転して並べ、PDF に書き出す）
+  - レイアウト表は Python 版から自動生成し、Node で GAS のコードを
+    実際に走らせて Python 版と一致することをテストで確かめている
+
+### 修正
+
+- 正方形の格子で用紙の向きが同点になり、`orihon4-landscape` が
+  横長パネルのレイアウトなのに縦置きを選んで中身を 90 度回していた。
+  レイアウトが想定する持ち方（`turn`）で同点を解くようにした
+
 ## [0.2.0] - 2026-09-05
 
 ### 追加
@@ -77,6 +109,7 @@
     `printers` / `selftest` / `config` / `update` / `doctor`）
   - 162 件のテストと、レイアウト定義から生成する面付け図
 
-[Unreleased]: https://github.com/kiwiman0706-beep/a7leafletprinter/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kiwiman0706-beep/a7leafletprinter/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/kiwiman0706-beep/a7leafletprinter/releases/tag/v0.3.0
 [0.2.0]: https://github.com/kiwiman0706-beep/a7leafletprinter/releases/tag/v0.2.0
 [0.1.0]: https://github.com/kiwiman0706-beep/a7leafletprinter/releases/tag/v0.1.0

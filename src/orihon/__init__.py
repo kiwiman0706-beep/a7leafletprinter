@@ -6,7 +6,7 @@
 
 #: このパッケージの唯一のバージョン定義。
 #: pyproject.toml はここを参照し、インストーラと自動更新もここを見る。
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 #: 自動更新の取得元（GitHub の owner/repo）
 UPDATE_REPO = "kiwiman0706-beep/a7leafletprinter"
