@@ -115,28 +115,21 @@ Type: filesandordirs; Name: "{app}\src\orihon\__pycache__"
 Type: dirifempty;     Name: "{app}"
 
 [Code]
-var
-  PythonPath: String;
 
-{ 下ごしらえ用スクリプトを一時フォルダへ出して、Python を探す }
-function DetectPython(): String;
+{ 下ごしらえ用スクリプトを一時フォルダへ出して、Python があるか確かめる。
+  見つかったパスそのものは受け取らない。Install-OrihonPrinter.ps1 の
+  Find-Python が同じ探索をするので渡す必要がなく、パスを文字列で
+  やり取りしない分、日本語のユーザー名などで壊れる余地も無くなる。 }
+function PythonAvailable(): Boolean;
 var
-  OutFile, Content: String;
   ResultCode: Integer;
 begin
-  Result := '';
   ExtractTemporaryFile('Find-PythonPath.ps1');
-  OutFile := ExpandConstant('{tmp}\orihon-python.txt');
-  DeleteFile(OutFile);
-  if Exec('powershell.exe',
-          '-NoProfile -ExecutionPolicy Bypass -File "' +
-          ExpandConstant('{tmp}\Find-PythonPath.ps1') + '" -Out "' + OutFile + '"',
-          '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-  begin
-    if (ResultCode = 0) and LoadStringFromFile(OutFile, Content) then
-      Result := Trim(Content);
-    DeleteFile(OutFile);
-  end;
+  Result := Exec('powershell.exe',
+                 '-NoProfile -ExecutionPolicy Bypass -File "' +
+                 ExpandConstant('{tmp}\Find-PythonPath.ps1') + '"',
+                 '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
+            and (ResultCode = 0);
 end;
 
 function InstallPythonWithWinget(): Boolean;
@@ -154,17 +147,13 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  PythonPath := DetectPython();
-  if PythonPath <> '' then
+  if PythonAvailable() then
     Exit;
 
   if MsgBox(CustomMessage('NeedPython'), mbConfirmation, MB_YESNO) = IDYES then
-  begin
     InstallPythonWithWinget();
-    PythonPath := DetectPython();
-  end;
 
-  if PythonPath = '' then
+  if not PythonAvailable() then
     Result := CustomMessage('PythonFailed');
 end;
 
@@ -177,9 +166,6 @@ begin
   Arguments := '-NoProfile -ExecutionPolicy Bypass -File "' +
                ExpandConstant('{app}\installer\Install-OrihonPrinter.ps1') + '"' +
                ' -Venv "' + ExpandConstant('{#DataDir}\venv') + '"';
-  if PythonPath <> '' then
-    Arguments := Arguments + ' -Python "' + PythonPath + '"';
-
   Result := Exec('powershell.exe', Arguments, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
             and (ResultCode = 0);
 end;
