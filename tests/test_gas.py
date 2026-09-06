@@ -9,8 +9,10 @@ GAS 側は生成物なので、ずれたらこのテストが落ちる。
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 from math import log
 from pathlib import Path
 
@@ -36,7 +38,9 @@ def _run_gas(script: str) -> object:
         "console.log(eval(sources + check));\n"
     )
     result = subprocess.run(
-        ["node", "-e", runner], capture_output=True, text=True, timeout=60, cwd=str(ROOT)
+        ["node", "-e", runner], capture_output=True, text=True, timeout=60, cwd=str(ROOT),
+        # Windows では既定が cp1252 になり、日本語を含む入出力で読み書きが壊れる
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
@@ -45,12 +49,14 @@ def _run_gas(script: str) -> object:
 # ----------------------------------------------------------------------
 # 生成物が最新か
 # ----------------------------------------------------------------------
-def test_generated_layouts_are_up_to_date(tmp_path, monkeypatch):
+def test_generated_layouts_are_up_to_date():
     """tools/make_gas_layouts.py を流し直しても中身が変わらないこと。"""
     before = (GAS / "Layouts.gs").read_text(encoding="utf-8")
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
     result = subprocess.run(
-        ["python3", "tools/make_gas_layouts.py"],
+        [sys.executable, "tools/make_gas_layouts.py"],
         capture_output=True, text=True, timeout=120, cwd=str(ROOT),
+        encoding="utf-8", errors="replace", env=env,
     )
     assert result.returncode == 0, result.stderr
     after = (GAS / "Layouts.gs").read_text(encoding="utf-8")
@@ -193,5 +199,6 @@ def test_all_gas_files_are_syntactically_valid():
         result = subprocess.run(
             ["node", "--check", "-"], input=source,
             capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
         )
         assert result.returncode == 0, f"{name}: {result.stderr}"

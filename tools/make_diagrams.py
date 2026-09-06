@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from orihon import layouts  # noqa: E402
+from orihon import configure_stdio, layouts  # noqa: E402
 from orihon.layouts import Layout  # noqa: E402
 
 # パネルの縦横は、仕上がりの向き（turn）に合わせて入れ替える
@@ -94,6 +94,8 @@ def render(layout: Layout) -> str:
 
 
 def main() -> int:
+    # 出力をファイルやパイプに向けても日本語で落ちないようにする
+    configure_stdio()
     out_dir = ROOT / "docs" / "images"
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []

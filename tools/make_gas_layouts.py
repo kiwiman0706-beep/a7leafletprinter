@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from orihon import layouts, paper  # noqa: E402
+from orihon import configure_stdio, layouts, paper  # noqa: E402
 
 OUTPUT = ROOT / "gas" / "Layouts.gs"
 
@@ -41,6 +41,8 @@ PAPER_HEADER = """
 
 
 def main() -> int:
+    # 出力をファイルやパイプに向けても日本語で落ちないようにする
+    configure_stdio()
     entries = []
     for layout in layouts.PRESETS.values():
         entries.append({

@@ -18,6 +18,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import pymupdf  # noqa: E402
 
+from orihon import configure_stdio  # noqa: E402
+
 #: ICO に入れる大きさ（Windows がこの中から適したものを選ぶ）
 SIZES = (16, 24, 32, 48, 64, 128, 256)
 
@@ -83,6 +85,8 @@ def build_ico(path: Path) -> Path:
 
 
 def main() -> int:
+    # 出力をファイルやパイプに向けても日本語で落ちないようにする
+    configure_stdio()
     ico = build_ico(ROOT / "installer" / "setup" / "orihon.ico")
     print(f"{ico.relative_to(ROOT)}  ({ico.stat().st_size:,} bytes, {len(SIZES)} 種類)")
     # 見た目確認用に大きい PNG も出す
