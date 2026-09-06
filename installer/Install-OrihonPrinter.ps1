@@ -24,6 +24,10 @@
 .PARAMETER Python
     使用する pythonw.exe / python.exe のパス。省略時は自動検出します。
 
+.PARAMETER Venv
+    専用の仮想環境をここに作り、そちらを使います（setup.exe 版はこれを使います）。
+    ユーザーの Python 環境を汚さず、あとから壊れることもありません。
+
 .PARAMETER NoTask
     ログオン時に監視プロセスを自動起動するタスクを作りません。
 
@@ -43,6 +47,7 @@ param(
     [ValidateSet("A4", "A5", "A6", "A7", "B5", "B6", "Letter")]
     [string]$DefaultPaper = "A7",
     [string]$Python = "",
+    [string]$Venv = "",
     [switch]$NoTask,
     [switch]$NoPipInstall
 )
@@ -82,6 +87,19 @@ function Find-Python {
     if ($launcher) {
         $found = & $launcher.Source -3 -c "import sys; print(sys.executable)" 2>$null
         if ($LASTEXITCODE -eq 0 -and $found) { return $found.Trim() }
+    }
+    # PATH に入っていない場合に備えて、よくある導入先も見る
+    # （winget で入れた直後は、まだ PATH が反映されていない）
+    $patterns = @(
+        "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
+        "$env:ProgramFiles\Python3*\python.exe",
+        "${env:ProgramFiles(x86)}\Python3*\python.exe",
+        "$env:LOCALAPPDATA\Microsoft\WindowsApps\python3.*.exe"
+    )
+    foreach ($pattern in $patterns) {
+        $candidate = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if ($candidate) { return $candidate.FullName }
     }
     throw "Python が見つかりません。https://www.python.org/ から入れるか -Python でパスを指定してください。"
 }
@@ -134,8 +152,26 @@ $PythonW = Find-Python -Preferred $Python
 $PythonExe = Get-ConsolePython -PythonPath $PythonW
 Write-Ok $PythonW
 
+if ($Venv) {
+    Write-Step "専用の仮想環境を用意しています: $Venv"
+    $venvPython = Join-Path $Venv "Scripts\python.exe"
+    if (-not (Test-Path $venvPython)) {
+        & $PythonExe -m venv $Venv
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPython)) {
+            throw "仮想環境を作れませんでした: $Venv"
+        }
+        Write-Ok "作成しました"
+    } else {
+        Write-Ok "既にあります"
+    }
+    $PythonExe = $venvPython
+    $venvPythonW = Join-Path $Venv "Scripts\pythonw.exe"
+    $PythonW = if (Test-Path $venvPythonW) { $venvPythonW } else { $venvPython }
+}
+
 if (-not $NoPipInstall) {
     Write-Step "必要な Python ライブラリを入れています (pymupdf, pywin32)"
+    & $PythonExe -m pip install --disable-pip-version-check --quiet --upgrade pip
     & $PythonExe -m pip install --disable-pip-version-check --quiet --upgrade pymupdf pywin32
     if ($LASTEXITCODE -ne 0) {
         Write-Warn2 "pip に失敗しました。手動で `"$PythonExe -m pip install pymupdf pywin32`" を実行してください。"

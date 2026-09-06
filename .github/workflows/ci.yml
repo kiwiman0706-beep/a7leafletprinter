@@ -48,3 +48,36 @@ jobs:
             }
             Write-Host "OK $($_.Name)"
           }
+
+  setup-exe:
+    name: setup.exe を組み立てる
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inno Setup を用意する
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            Write-Host "Inno Setup が無いので入れます"
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe が見つかりません: $iscc" }
+          Write-Host "OK $iscc"
+
+      - name: コンパイルする
+        shell: pwsh
+        run: |
+          $version = python -c "import sys; sys.path.insert(0,'src'); import orihon; print(orihon.__version__)"
+          Write-Host "version = $version"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "/DAppVersion=$version" "installer\setup\orihon.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC が失敗しました" }
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-exe
+          path: dist/*.exe
+          if-no-files-found: error

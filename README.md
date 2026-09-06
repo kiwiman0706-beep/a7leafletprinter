@@ -45,9 +45,28 @@ Windows の署名付きカーネルドライバーを書く必要はありませ
 | ライブラリ | `pymupdf`、`pywin32`（インストーラが自動で入れます） |
 | 実プリンタへ自動送出したい場合 | [SumatraPDF](https://www.sumatrapdfreader.org/) または Ghostscript（任意） |
 
-### かんたん（推奨）
+### いちばんかんたん：setup.exe
 
-PowerShell を開いて、これ 1 行です。clone もダウンロードも要りません。
+[リリースページ](https://github.com/kiwiman0706-beep/a7leafletprinter/releases/latest)から
+**`OrihonPrinter-Setup-x.y.z.exe`** をダウンロードして、ダブルクリックするだけです。
+
+<img src="docs/images/icon.png" width="72" align="right" alt="アイコン">
+
+- ウィザードに沿って進めば、仮想プリンタの登録まで終わります
+- 「プログラムと機能」に載るので、**アンインストールもそこから**できます
+- スタートメニューに「設定」「監視を開始」のショートカットができます
+- **専用の Python 環境**を `C:\ProgramData\OrihonPrinter\venv` に作ります。
+  お使いの Python はそのままなので、あとから壊れる心配がありません
+- Python が入っていなければ、winget で入れるか聞いてくれます
+
+> **SmartScreen の警告について**
+> コード署名証明書を持っていないため、初回は「WindowsによってPCが保護されました」が出ます。
+> **［詳細情報］→［実行］** で進めてください。
+> 気になる場合は、リリースページに載せている SHA-256 と照合してください。
+
+### PowerShell 1 行で入れる
+
+コンソール派の方はこちらでも。clone もダウンロードも要りません。
 
 ```powershell
 irm https://github.com/kiwiman0706-beep/a7leafletprinter/releases/latest/download/bootstrap.ps1 | iex
@@ -92,11 +111,19 @@ powershell -ExecutionPolicy Bypass -File .\installer\Install-OrihonPrinter.ps1
 
 ### アンインストール
 
+`setup.exe` で入れた場合は、**設定 → アプリ → インストールされているアプリ**から
+「A7 折本プリンター」をアンインストールしてください。
+仮想プリンタ・ポート・監視タスク・仮想環境まで片付きます。
+
+それ以外の入れ方をした場合:
+
 ```powershell
 .\installer\uninstall.cmd            # 設定とログは残す
 # または
 .\installer\Uninstall-OrihonPrinter.ps1 -RemoveData   # きれいに全部消す
 ```
+
+どの入れ方でも、設定・ログ・出力した PDF は既定では残ります。
 
 ---
 
@@ -455,6 +482,10 @@ orihon config --set update_auto_install=true
 pip install -e ".[dev]"
 pytest                          # 162 件のテスト
 python tools/make_diagrams.py   # docs/images/*.svg を再生成
+python tools/make_icon.py       # アイコンを再生成
+
+# setup.exe を組み立てる（Windows + Inno Setup 6 が必要）
+iscc /DAppVersion=0.2.0 installer\setup\orihon.iss
 ```
 
 レイアウトを足したいときは `src/orihon/layouts.py` に 1 つ表を書くだけです。
@@ -477,6 +508,7 @@ src/orihon/
   cli.py       コマンドライン
 installer/     仮想プリンタのインストーラ（PowerShell）
   bootstrap.ps1  リリースを取ってきて入れる 1 行インストーラ
+  setup/         setup.exe を組み立てる Inno Setup スクリプトとアイコン
 .github/workflows/  CI（テスト）とリリース（タグを打つと自動で公開）
 docs/          面付けの解説と図
 ```

@@ -13,7 +13,39 @@ permissions:
   contents: write
 
 jobs:
+  # setup.exe は Windows でしか組み立てられないので、別ジョブに分ける
+  setup-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inno Setup を用意する
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe が見つかりません" }
+
+      - name: バージョンを確かめて組み立てる
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $code = python -c "import sys; sys.path.insert(0,'src'); import orihon; print(orihon.__version__)"
+          if ($version -ne $code) { throw "タグ ($version) と __version__ ($code) が食い違っています" }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "/DAppVersion=$version" "installer\setup\orihon.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC が失敗しました" }
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-exe
+          path: dist/*.exe
+          if-no-files-found: error
+
   release:
+    needs: setup-exe
     runs-on: ubuntu-latest
     steps:
       # タグ push のときはそのタグ、手動実行のときは実行元のブランチを取る。
@@ -76,6 +108,12 @@ jobs:
           print(f"OK {path}: {len(names)} entries, root={root}")
           PY
 
+      - name: setup.exe を受け取る
+        uses: actions/download-artifact@v4
+        with:
+          name: setup-exe
+          path: dist
+
       - name: リリースノートを取り出す
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -90,6 +128,21 @@ jobs:
           PY
           cat release-notes.md
 
+      - name: チェックサムを添える
+        run: |
+          {
+            echo
+            echo "### ダウンロードの照合用（SHA-256）"
+            echo
+            echo '```'
+            sha256sum "${{ steps.package.outputs.zip }}" installer/bootstrap.ps1 dist/*.exe \
+              | sed 's#[^ ]*/##'
+            echo '```'
+            echo
+            echo "PowerShell で確認する場合: \`Get-FileHash .\\OrihonPrinter-Setup-*.exe\`"
+          } >> release-notes.md
+          cat release-notes.md
+
       - name: リリースを作る
         env:
           GH_TOKEN: ${{ github.token }}
@@ -98,7 +151,8 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "既にリリースがあるので、配布ファイルだけ差し替えます"
             gh release upload "$TAG" \
-              "${{ steps.package.outputs.zip }}" "installer/bootstrap.ps1" --clobber
+              "${{ steps.package.outputs.zip }}" "installer/bootstrap.ps1" \
+              dist/*.exe --clobber
           else
             # タグがまだ無ければ、いまのコミットに作られる
             gh release create "$TAG" \
@@ -106,7 +160,8 @@ jobs:
               --title "$TAG" \
               --notes-file release-notes.md \
               "${{ steps.package.outputs.zip }}" \
-              "installer/bootstrap.ps1"
+              "installer/bootstrap.ps1" \
+              dist/*.exe
           fi
           echo "公開しました:"
           gh release view "$TAG" --json tagName,url,assets --jq '.tagName, .url, (.assets[].name)' 

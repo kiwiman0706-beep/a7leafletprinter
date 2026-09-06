@@ -5,6 +5,29 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-05
+
+### 追加
+
+- **`setup.exe`（Inno Setup 製のインストーラ）**
+  - ダブルクリックでウィザードが立ち上がり、使用許諾 → インストールで完了
+  - 「プログラムと機能」に載り、アンインストールもそこから行える
+  - スタートメニューとデスクトップにショートカットを作る
+  - **専用の Python 仮想環境**を `%ProgramData%\OrihonPrinter\venv` に作り、
+    そこに pymupdf / pywin32 を入れる。ユーザーの Python 環境を汚さず、
+    あとから壊れることもない
+  - Python が見つからないときは、winget での導入を提案する
+    （PATH に載る前でも見つけられるよう、既定の導入先も探す）
+  - 日本語・英語のウィザード
+- アプリのアイコン（`installer/setup/orihon.ico`）。面付け図と同じく
+  `tools/make_icon.py` でコードから生成している
+- インストーラの `-Venv` オプション（`setup.exe` 版が使う）
+
+### 変更
+
+- `Find-Python` が、PATH に無い場合でも `%LOCALAPPDATA%\Programs\Python` などの
+  既定の導入先を探すようになった（winget で入れた直後は PATH が未反映のため）
+
 ## [0.1.0] - 2026-09-05
 
 最初のリリース。Windows の印刷ダイアログから選ぶだけで、キンコーズ
@@ -54,5 +77,6 @@
     `printers` / `selftest` / `config` / `update` / `doctor`）
   - 162 件のテストと、レイアウト定義から生成する面付け図
 
-[Unreleased]: https://github.com/kiwiman0706-beep/a7leafletprinter/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/kiwiman0706-beep/a7leafletprinter/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/kiwiman0706-beep/a7leafletprinter/releases/tag/v0.2.0
 [0.1.0]: https://github.com/kiwiman0706-beep/a7leafletprinter/releases/tag/v0.1.0

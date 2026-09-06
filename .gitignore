@@ -13,3 +13,6 @@ venv/
 /out/
 /samples/out/
 *.log
+
+# setup.exe の組み立て先
+/dist/
