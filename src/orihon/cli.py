@@ -14,7 +14,8 @@ import logging
 import sys
 from pathlib import Path
 
-from . import __version__, config, configure_stdio, impose, layouts, update, watcher, winprint
+from . import (__version__, config, configure_stdio, impose, layouts, unimpose,
+               update, watcher, winprint)
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,45 @@ def cmd_impose(args: argparse.Namespace) -> int:
         outcome = winprint.print_pdf(out, args.print_to)
         print(f"出力動作   : {outcome}")
     elif args.open:
+        winprint.open_file(out)
+    return 0
+
+
+def cmd_unimpose(args: argparse.Namespace) -> int:
+    cfg = config.load()
+    src = Path(args.input)
+    if not src.is_file():
+        print(f"入力が見つかりません: {src}", file=sys.stderr)
+        return 1
+
+    opts = unimpose.UnimposeOptions(
+        layout=args.layout or cfg.layout,
+        paper=args.paper or cfg.paper,
+        sheet_rotate="auto" if args.sheet_rotate == "auto" else int(args.sheet_rotate),
+        crop=args.crop,
+        fit_aspect=not args.no_fit_aspect,
+        page_rotate=args.page_rotate,
+        max_sheets=args.max_sheets or 0,
+    )
+    if args.threshold is not None:
+        opts.ink_threshold = args.threshold
+
+    try:
+        if args.preview:
+            out = Path(args.output) if args.output else src.with_name(f"{src.stem}_確認.pdf")
+            unimpose.preview_pdf(src, out, opts)
+            print(f"切り分けの確認用 : {out}")
+            print("赤い枠と番号が実際のページと合っているか確かめてください。")
+            print("上下が逆なら --sheet-rotate 180 を、ずれていれば --no-auto-crop を試してください。")
+        else:
+            out = Path(args.output) if args.output else src.with_name(f"{src.stem}_元原稿.pdf")
+            result = unimpose.unimpose_pdf(src, out, opts)
+            print(result.describe())
+    except (KeyError, ValueError) as exc:
+        print(f"エラー: {exc}", file=sys.stderr)
+        return 1
+
+    if args.open:
         winprint.open_file(out)
     return 0
 
@@ -430,6 +470,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_impose_options(p)
     p.set_defaults(func=cmd_impose)
+
+    p = sub.add_parser(
+        "unimpose",
+        help="折本のシートをスキャンした PDF／画像を、元のページ順に戻す",
+    )
+    p.add_argument("input", help="スキャンした PDF または画像（1 枚 = 折本 1 冊分）")
+    p.add_argument("-o", "--output", help="出力 PDF（既定: 入力名_元原稿.pdf）")
+    p.add_argument(
+        "--preview", action="store_true",
+        help="切り分け位置とページ番号をスキャンに重ねた確認用 PDF を作る",
+    )
+    p.add_argument("-l", "--layout", help="面付けレイアウト（既定: 設定値）")
+    p.add_argument("-p", "--paper", help="刷ったときの用紙サイズ（既定: 設定値）")
+    p.add_argument(
+        "--sheet-rotate", default="auto", choices=("auto", "0", "90", "180", "270"),
+        help="スキャンした紙の向き。auto は縦横比から判定する（上下逆は判定できない）",
+    )
+    p.add_argument("--page-rotate", type=int, default=0, choices=(0, 90, 180, 270),
+                   help="復元した全ページに追加でかける回転")
+    p.add_argument(
+        "--crop", default="auto", choices=("auto", "always", "never"),
+        help="紙の位置の決め方。auto=既に用紙ちょうどならそのまま使う（ScanSnap など）/ "
+             "always=必ずインクの範囲から探す / never=紙面全体をそのまま使う",
+    )
+    p.add_argument("--no-fit-aspect", action="store_true",
+                   help="検出した範囲を用紙の縦横比に合わせて広げる補正をしない")
+    p.add_argument("--threshold", type=int, metavar="0-255",
+                   help="これより暗い点をインクとみなす（既定 235）")
+    p.add_argument("--max-sheets", type=int, metavar="N", help="処理するシートの最大枚数")
+    p.add_argument("--open", action="store_true", help="結果を既定のビューアで開く")
+    p.set_defaults(func=cmd_unimpose)
 
     p = sub.add_parser("watch", help="スプールフォルダを監視して自動で面付けする")
     p.add_argument("--spool", help="監視するフォルダ（既定: 設定値）")

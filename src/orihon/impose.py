@@ -114,6 +114,12 @@ def _choose_landscape(
         w, h = sheet.size_pt(landscape)
         panel_aspect = (w / layout.cols) / (h / layout.rows)
         score = min(abs(log(panel_aspect) - log(a)) for a in candidates)
+        # 正方形の格子（2列2段など）では、どちらの向きでもパネルの形が同じで
+        # 差がつかない。そのときはレイアウトが想定する持ち方に合わせる。
+        # turn=90（天綴じ）は横長のパネル、turn=0 は縦長のパネルを想定している。
+        wants_landscape_panel = layout.turn == 90
+        if (panel_aspect > 1.0) == wants_landscape_panel:
+            score -= 1e-6
         if best_score is None or score < best_score - 1e-9:
             best, best_score = landscape, score
     return best

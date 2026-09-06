@@ -24,7 +24,7 @@ except ImportError as exc:  # pragma: no cover - tkinter 無し環境
     ) from None
 
 from . import (__version__, config, configure_stdio, impose, job, layouts, paper,
-               update, watcher, winprint)
+               unimpose, update, watcher, winprint)
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +134,7 @@ class OrihonApp:
         bar.pack(fill="x", pady=(12, 0))
         ttk.Button(bar, text="保存", command=self.save).pack(side="left")
         ttk.Button(bar, text="テスト出力", command=self.test_output).pack(side="left", padx=6)
+        ttk.Button(bar, text="スキャンから戻す...", command=self.restore_from_scan).pack(side="left")
         ttk.Button(bar, text="出力フォルダを開く", command=self.open_output_dir).pack(side="left")
         ttk.Button(bar, text="ログを開く", command=self.open_log).pack(side="left", padx=6)
         ttk.Button(bar, text="閉じる", command=self._on_close).pack(side="right")
@@ -423,6 +424,43 @@ class OrihonApp:
             messagebox.showerror("テスト出力に失敗しました", f"{exc}\n\n{traceback.format_exc()}")
             return
         self._log(f"テスト出力: {result.output}")
+
+    def restore_from_scan(self) -> None:
+        """折本のシートをスキャンした PDF／画像を、元のページ順に戻す。"""
+        cfg = self.collect()
+        if cfg is None:
+            return
+        path = filedialog.askopenfilename(
+            title="折本のシートをスキャンしたファイルを選んでください",
+            filetypes=[("PDF と画像", "*.pdf *.jpg *.jpeg *.png *.tif *.tiff"),
+                       ("すべてのファイル", "*.*")],
+        )
+        if not path:
+            return
+
+        source = Path(path)
+        opts = unimpose.UnimposeOptions(layout=cfg.layout, paper=cfg.paper)
+        out_dir = cfg.resolved_output_dir()
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            result = unimpose.unimpose_pdf(
+                source, out_dir / f"{source.stem}_元原稿.pdf", opts
+            )
+        except Exception as exc:
+            logger.exception("スキャンから戻せませんでした")
+            messagebox.showerror("戻せませんでした", str(exc))
+            return
+
+        self._log(f"スキャンから復元: {result.output.name}（{result.pages} ページ）")
+        message = result.describe()
+        if messagebox.askyesno(
+            "復元しました",
+            f"{message}\n\n開きますか？\n\n"
+            "ページの順番や向きがおかしい場合は、コマンドラインで\n"
+            "  orihon unimpose <ファイル> --preview\n"
+            "を実行すると、切り分け位置を確かめられます。",
+        ):
+            winprint.open_file(result.output)
 
     def open_output_dir(self) -> None:
         path = Path(self.v_output_dir.get() or self.cfg.resolved_output_dir())
