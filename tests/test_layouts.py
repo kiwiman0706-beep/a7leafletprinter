@@ -106,3 +106,62 @@ def test_ascii_art_marks_cuts():
     art = layouts.get("orihon8").ascii_art()
     assert "=====" in art  # 切り込み
     assert " 1^" in art and " 7v" in art
+
+
+# ----------------------------------------------------------------------
+# 自分の折り方を直接指定する
+# ----------------------------------------------------------------------
+def test_spec_matches_the_bundled_preset():
+    """図6 の並びを書き下すと、同梱のプリセットと同じものになること。"""
+    spec = layouts.get("7,6,5,4/8,1,2,3")
+    preset = layouts.get("orihon8")
+    assert spec.pages == preset.pages
+    assert spec.rotations == preset.rotations
+    assert set(spec.cut_edges()) == set(preset.cut_edges())
+
+
+def test_spec_supports_the_other_common_zine_fold():
+    """海外でよくある zine 折り（表紙が右下）も扱えること。
+
+    同じ 8 ページの折本でも、折り方によって表紙の来るマスが変わる。
+    プリセットに無い並びでも、書き下せば使える。
+    """
+    zine = layouts.get("5,4,3,2/6,7,8,1")
+    zine.validate()
+    assert zine.position_of(1) == (1, 3)          # 表紙は右下
+    # 切り込みの位置は図6 と同じ（中央 2 マス分の横線）
+    assert set(zine.cut_edges()) == {Edge(0, 1, "h"), Edge(0, 2, "h")}
+
+
+def test_spec_accepts_spaces_and_extra_separators():
+    assert layouts.get(" 7 6 5 4 / 8 1 2 3 ").pages == ((7, 6, 5, 4), (8, 1, 2, 3))
+
+
+def test_spec_finds_the_turned_variant():
+    """横長パネル（天綴じ）の並びも、回転角を自動で決められること。"""
+    turned = layouts.get("8,7/1,6/2,5/3,4")
+    turned.validate()
+    assert turned.turn == 90
+    assert turned.rotations == layouts.get("orihon8-landscape").rotations
+
+
+def test_spec_puts_the_cover_upright():
+    for spec in ("7,6,5,4/8,1,2,3", "5,4,3,2/6,7,8,1", "8,7/1,6/2,5/3,4"):
+        layout = layouts.get(spec)
+        row, col = layout.position_of(1)
+        assert layout.rotations[row][col] == 0, spec
+
+
+def test_spec_rejects_an_impossible_arrangement():
+    with pytest.raises(LayoutError, match="折本になりません"):
+        layouts.get("1,2,3,4/5,6,7,8")
+
+
+def test_spec_rejects_nonsense():
+    with pytest.raises(LayoutError, match="読めません"):
+        layouts.parse_spec("あ,い/う,え")
+
+
+def test_unknown_name_still_raises_key_error():
+    with pytest.raises(KeyError):
+        layouts.get("そんな名前はない")

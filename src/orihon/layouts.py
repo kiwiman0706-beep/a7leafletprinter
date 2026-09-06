@@ -272,11 +272,96 @@ class Layout:
         return "\n".join(lines) + "\n" + legend
 
 
-def _auto_rotations(pages: Sequence[Sequence[int]]) -> tuple[tuple[int, ...], ...]:
-    """最下段を 0 度として、1 段上がるごとに 180 度ずつ反転させる。"""
+def _auto_rotations(
+    pages: Sequence[Sequence[int]], turn: int = 0
+) -> tuple[tuple[int, ...], ...]:
+    """折り線の向きから、各マスの回転角を決める。
+
+    立てて読む本（turn=0）は横の折り線で裏返るので、段ごとに 180 度ずつ反転する。
+    横に倒して読む本（turn=90）は縦の折り線で裏返るので、列ごとに反転する。
+    """
     rows = len(pages)
+    if turn == 90:
+        return tuple(
+            tuple(180 if c % 2 else 0 for c in range(len(row))) for row in pages
+        )
     return tuple(
         tuple(180 if (rows - 1 - r) % 2 else 0 for _ in row) for r, row in enumerate(pages)
+    )
+
+
+def _normalise_cover(
+    pages: Sequence[Sequence[int]], rotations: Sequence[Sequence[int]]
+) -> tuple[tuple[int, ...], ...]:
+    """表紙（ページ1）が 0 度になるよう、全体の回転角をそろえる。
+
+    全マスに同じ角度を足しても隣同士の差は変わらないので、折本としての
+    成立性には影響しない。変わるのは本をどちら向きに持って読むかだけ。
+    """
+    offset = 0
+    for row_pages, row_rotations in zip(pages, rotations):
+        for page_no, rotation in zip(row_pages, row_rotations):
+            if page_no == 1:
+                offset = rotation
+    return tuple(tuple((r - offset) % 360 for r in row) for row in rotations)
+
+
+def parse_spec(spec: str, name: str = "custom", title: str = "") -> Layout:
+    """「7,6,5,4/8,1,2,3」のような文字列からレイアウトを作る。
+
+    折り方は人によって違う。同じ 8 ページの折本でも、キンコーズの図6 と
+    海外でよくある zine 折りでは、表紙の来るマスが 2 つずれる。
+    自分の折り方を書き下せば、そのまま使えるようにしている。
+
+    段を ``/`` で、マスを ``,`` で区切る。上の段から順に、
+    紙を開いて置いたときに見えるとおりに書く。回転角は折り線の向きから
+    自動で決まるので、書かなくてよい。
+    """
+    rows: list[list[int]] = []
+    for chunk in str(spec).split("/"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            rows.append([int(cell) for cell in chunk.replace(" ", ",").split(",") if cell])
+        except ValueError as exc:
+            raise LayoutError(
+                f"レイアウトの書き方が読めません: {chunk!r}"
+                "（「7,6,5,4/8,1,2,3」のように書いてください）"
+            ) from exc
+    if not rows:
+        raise LayoutError("レイアウトが空です")
+
+    # 同じ並びが turn=0 でも turn=90 でも折本として成立することがある。
+    # 違うのは「仕上がった本をどちら向きに持つか」だけなので、
+    # パネルの形から自然な方を先に試す。A 判の紙を cols 列 rows 段に割ると、
+    # 列より段が多いときにパネルが横長になり、天綴じ（turn=90）が自然になる。
+    cols = len(rows[0])
+    order = (90, 0) if cols < len(rows) else (0, 90)
+
+    problems: list[str] = []
+    for turn in order:
+        rotations = _normalise_cover(rows, _auto_rotations(rows, turn))
+        binding = "left" if turn == 0 else "top"
+        candidate = Layout(
+            name=name,
+            title=title or f"折本（{'x'.join(str(len(r)) for r in rows[:1])}列 {len(rows)}段・自分で指定）",
+            pages=tuple(tuple(row) for row in rows),
+            rotations=rotations,
+            kind="foldbook",
+            binding=binding,  # type: ignore[arg-type]
+            turn=turn,  # type: ignore[arg-type]
+            description="コマンドラインで直接指定されたレイアウト",
+        )
+        try:
+            candidate.validate()
+            return candidate
+        except LayoutError as exc:
+            problems.append(str(exc))
+
+    raise LayoutError(
+        "この並びでは折本になりません。\n  " + "\n  ".join(problems) +
+        "\n折ったメモに、めくる順に番号を書いてから開くと、正しい並びが分かります。"
     )
 
 
@@ -581,14 +666,23 @@ DEFAULT_LAYOUT = ORIHON8.name
 
 
 def get(name: str) -> Layout:
-    """プリセット名またはエイリアスからレイアウトを取得する。"""
+    """レイアウトを取得する。
+
+    プリセット名・別名のほか、「7,6,5,4/8,1,2,3」のような並びの
+    直接指定も受け付ける（自分の折り方がプリセットに無いとき用）。
+    """
     key = (name or "").strip().lower()
     if key in PRESETS:
         return PRESETS[key]
     if key in _ALIASES:
         return PRESETS[_ALIASES[key]]
+    if any(ch.isdigit() for ch in key) and ("," in key or "/" in key):
+        return parse_spec(key)
     known = ", ".join(sorted(PRESETS))
-    raise KeyError(f"未知のレイアウト {name!r} です。利用できるのは: {known}")
+    raise KeyError(
+        f"未知のレイアウト {name!r} です。利用できるのは: {known}"
+        "（または「7,6,5,4/8,1,2,3」のように並びを直接指定）"
+    )
 
 
 def names() -> list[str]:
